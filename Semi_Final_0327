@@ -1,123 +1,118 @@
-
-
 import tensorflow as tf
 import numpy as np
 import random
 import copy
-
 import matplotlib.pyplot as plt
 
 #%% Data Preprocessing Define
 
 tf.reset_default_graph()
-
 np.random.seed(0)
 tf.set_random_seed(777)  # reproducibility
 
+# Tensorboard 파일 저장위치 설정
 #LOG_DIR = os.path.join(os.path.dirname(__file__), 'logss')
-##
-#if os.path.exists(LOG_DIR) is False:
+##if os.path.exists(LOG_DIR) is False:
 #    os.mkdir(LOG_DIR)
 
+# -1 ~ 1 범위로 정규화
 def MinMaxScalerbyRow(data):
-    #-1 ~ 1 범위로 표준화
     numerator = data - np.min(data, 0)
     denominator = (np.max(data, 0) - np.min(data, 0)) * 0.5
-    return ((numerator) / (denominator + 1e-7)) - 1
-
+    return ((numerator) / (denominator + 1e-7)) - 1 # (1e-7: noise를 추가하여 분모가 0이 되는 것을 방지)
+    
+# 마지막열을 추가하고 그 열에 P=V*I 값 저장
 def power_append(xy):
-    #마지막열을 추가하고 V*I=P 변수를 만듦
     xy = np.c_[xy, np.zeros(int(len(xy)))]
     for i in range(int(len(xy))):
         xy[i][3] = xy[i][0]*xy[i][1]
     return xy    
-
+    
+# 3.2V 이하가 되면 3.2V 이하가 된 시점부터 sec초 시간범위의 NG label 값을 1로 설정
 def labeling(xy, sec):
-    #3.2V가 되면 sec초 이전의 시간까지 NG label 1로 선언
     xy = np.c_[xy, np.zeros(int(len(xy)))]    
     for i in range(int(len(xy))):
-        if (i>= sec):
+        if (i >= sec):
             xy[i][4] = 0
-            if(xy[i][0]<=3.2):
-                i = i-sec
+            if(xy[i][0] <= 3.2):
+                i = i - sec
                 xy[i][4] = 1
                 for k in range(sec) :
                     i = i + 1
                     xy[i][4] = 1
     return xy
-
-def VoltageMinMax(data, max_val, min_val):
-    datav = data[:,0:1]
     
+# 데이터의 전압 값을 0 ~ 1 범위로 정규화 후, 최소전압 ~ 최대전압 범위로 다시 정규화
+def VoltageMinMax(data, max_val, min_val):
+    datav = data[:, 0:1]
     numerator = datav - np.min(datav,0)
-    denominator = np.max(datav, 0) - np.min(datav,0)
+    denominator = np.max(datav, 0) - np.min(datav, 0)
     datanv = numerator / (denominator + 1e-7)
-    data[:,0:1] = (datanv * (max_val - min_val)) + min_val
+    data[:, 0:1] = (datanv * (max_val - min_val)) + min_val
     return data
     
-
+# 전압 레이블을 이전과 현재의 전압의 차이인 Vd로 변경하여 데이터의 레이블을 다음과 같이 설정. (Vd, I, T, P)
 def chage_toVdelta(Xdata): 
-    #label : Vd,V,I,T,P 5개
     for i in range(int(len(Xdata)) - 1):
         Xdata[i][0] = (Xdata[i + 1][0] - Xdata[i][0])
-    Xdata[i+1][0] = Xdata[i][0]
+    Xdata[i + 1][0] = Xdata[i][0]
     return Xdata
-
+    
+# 데이터의 레이블을 다음과 같이 설정. (Vd, V, I, T, P) 
 def add_Vdelta(Xdata):
-    #label: Vd,I,T,P 4개
     delta_data = np.zeros((int(len(Xdata)), 1))
     delta_data = Xdata.copy()
-    delta_data = np.insert(delta_data, 0, 0,axis=1)
+    delta_data = np.insert(delta_data, 0, 0, axis=1)
     for i in range(int(len(Xdata)) - 1):
         delta_data[i][0] = (Xdata[i + 1][0] - Xdata[i][0])
-    delta_data[i+1][0] = delta_data[i][0]
+    delta_data[i + 1][0] = delta_data[i][0]
     return delta_data
     
-    
+# 전류 값 반올림
 def rounding(Xdata):
     for i in range(int(len(Xdata))):
-        #Xdata[i][0] = round(Xdata[i][0],2)#V
-        Xdata[i][1] = round(Xdata[i][1],2)#I
-        #Xdata[i][2] = round(Xdata[i][2],2)#T
-        #Xdata[i][3] = round(Xdata[i][3],2)#P
+        Xdata[i][1] = round(Xdata[i][1],2) # I
     return Xdata
     
+# 데이터의 열 삭제    
 def erasing(Xdata):
     data4X = np.delete(Xdata, 4, axis = 1)
     data3X = np.delete(data4X, 3, axis = 1)
     data2X = np.delete(data3X, 2, axis = 1)
-    return np.delete(data2X, 1, axis=1)
+    return np.delete(data2X, 1, axis = 1)
     
+# NG 값이 1인 갯수, NG 값이 0인 갯수 반환. data_dim(데이터의 열 수)
 def NG_count(xy, data_dim):
     j = 0
     for i in range(int(len(xy))):
-        if (xy[i][data_dim] == 1):#---------------------------------
+        if (xy[i][data_dim] == 1):
             j = j + 1
-    return j, int(len(xy))-j 
-
-
+    return j, int(len(xy)) - j 
+    
+# 2차원의 데이터를 seq_length 크기만큼 분할하고 분할한 것들을 하나씩 쌓아 올려 3차원 데이터 생성
 def build_dataset(time_series, seq_length, data_dim):
     dataX = []
     dataY = []
     for i in range(0, len(time_series) - seq_length):
-        _x = time_series[i:i + seq_length, 0:data_dim]#---------------
+        _x = time_series[i:i + seq_length, 0:data_dim]
         _y = time_series[i + seq_length - 1, [-1]]
         #print(_x, "->", _y)
         dataX.append(_x)
         dataY.append(_y)
     return np.array(dataX), np.array(dataY)
-
+    
+# NG 값이 0인 데이터와 NG 값이 1인 데이터의 비율을 1:1 로 맞춘다.
 def balancing(Xdata, Ydata, Max):    
     databX = []
     databY = []
-    j=0
-    k=0
+    j = 0
+    k = 0
     leng = int(len(Ydata))
-    #np.random.seed(0)
-    randomRow = np.arange(leng)  ## 갯수 다시 생각
-    random.shuffle(randomRow)
+    randomRow = np.arange(leng) 
+    random.shuffle(randomRow) # shuffle
     for i in randomRow:
-        if Ydata[randomRow[i]] == 0:   #임의의 순번 중 NG가 0인 순번의 데이터를 NG1인 데이터의 수만큼 새롭게 쌓는다.
+        # 임의의 순번 중 NG가 0인 순번의 데이터를 NG1인 데이터의 수만큼 새롭게 쌓는다.
+        if Ydata[randomRow[i]] == 0:   
             if j < Max: 
                 _x1 = Xdata[randomRow[i],:]
                 _y1 = Ydata[randomRow[i],:]
@@ -135,43 +130,42 @@ def balancing(Xdata, Ydata, Max):
             break
             
     return np.array(databX), np.array(databY)
-
+    
+# 데이터 병합
 def combine(xy1_x, xy1_y, xy2_x, xy2_y):
-#    dataX = []
-#    dataY = []
-#    dataX.append(xy1_x)
-#    dataY.append(xy1_y)
     dataX = np.vstack([np.array(xy1_x), np.array(xy2_x)])
     dataY = np.vstack([np.array(xy1_y), np.array(xy2_y)])
     
     return dataX, dataY
     
-
-def Scaling_dataset(dataX):# (7000,100,4)
+# 데이터 스케일링(전류, 온도, 전력 정규화)
+def Scaling_dataset(dataX): # dataX(7000,100,4)
     for i in range(dataX.shape[0]):
-        dataX[i,:,2:5] = MinMaxScalerbyRow(dataX[i,:,2:5])#-1~1 normalizing [0,1,2,3,4,5]:[1,2,3,4,5,6]
+        dataX[i,:,2:5] = MinMaxScalerbyRow(dataX[i,:,2:5])
     return dataX  
     
+# 기존의 데이터의 값들을 무작위로 섞어 재배열
 def shuffle_dataset(dataX,dataY):
-    
     shuffle = np.arange(dataY.shape[0])
     np.random.shuffle(shuffle)
     datasX = dataX[shuffle]
     datasY = dataY[shuffle]
     return datasX, datasY
-
+    
+# leng 크기만큼 샘플 크기를 줄임
 def sampleSizeDown(Xdata, Ydata, leng):
     dataX = []
     dataY = []
     
     for i in range(0, leng):
-        _x = Xdata[i,:,:]
-        _y = Ydata[i,:]
+        _x = Xdata[i, :, :]
+        _y = Ydata[i, :]
         dataX.append(_x)
         dataY.append(_y)
         
     return np.array(dataX), np.array(dataY)
     
+# 데이터를 3등분하여 반환
 def sampledivide(Xdata, Ydata):
     data1X = []
     data2X = []
@@ -198,17 +192,22 @@ def sampledivide(Xdata, Ydata):
             data3Y.append(_3y)
             
     return np.array(data1X), np.array(data1Y), np.array(data2X), np.array(data2Y), np.array(data3X), np.array(data3Y)
-
+    
+    
 #%% Model Training Function Define
 
+# 모델 전체를 설정하고 모델의 출력(예측결과)을 반환한다.
+# 생성한 셀과 입력을 토대로 RNN 구조를 생성한다. 이때, output과 마지막 상태를 반환한다.
+# 이때 각 입출력의 데이터 크기는 X[7579,100,5] outputs[7579,100,10] 이고 state는 매 셀마다 넘겨주는 내부 오차 값이다.
 def inference(X, seq_length=None, hidden_dim=None, output_dim=None):
-
-    
-    
     cell = tf.contrib.rnn.LSTMCell(hidden_dim, forget_bias=1.0)
     outputs, _states = tf.nn.dynamic_rnn(cell, X, dtype=tf.float32)
     
-    #-------1. fully connected method-------   
+    #-------1. fully connected method-------
+    # hidden dim 크기의 outputs의 차원을 1차원으로 바꿔준다.
+    # Fully connected는 마지막 출력을 확률 값으로 변환하여(즉, 모든 출력값을 0~1 사이로 변환하여 전체 합이 1이 되게 한다.)
+    # 여러 개의 레이블 중 한 개를 선택한다. 
+    # 이렇게 Y_pred [7579, 1] 형태의 예측값이 출력된다.
     Y_pred = tf.contrib.layers.fully_connected(
            outputs[:, -1], output_dim, activation_fn=None)  # We use the last cell's output
     
@@ -218,8 +217,7 @@ def inference(X, seq_length=None, hidden_dim=None, output_dim=None):
 #        Weight = tf.Variable(initial, name='w')
 #        
 #        return Weight
-#
-#    def bias_variable(shape):
+##    def bias_variable(shape):
 #        initial = tf.zeros(shape, dtype=tf.float32)
 #        Bias = tf.Variable(initial, name='b')
 #        
@@ -227,39 +225,48 @@ def inference(X, seq_length=None, hidden_dim=None, output_dim=None):
 #    V = weight_variable([hidden_dim, output_dim])
 #    c = bias_variable([output_dim])
 #    Y_pred = tf.matmul(outputs[:,-1], V) + c
-
     return Y_pred
-
+    
+# 모델의 오차함수를 정의하고 그 값을 반환한다.
+# cross_entropy 함수 이용 (예측한 값이 실제 값과 차이가 크면 cost 값이 크게 나타나고 예측한 값이 실제 값과 유사하면 cost 값이 작게 나타난다.) 
+# 크로스 엔트로피 함수를 사용한 이유는 Hypothesis 함수가 시그모이드 함수를 거쳐서 0과 1사이의 값을 갖게 되고, 
+# cost 함수에 local minima가 생기기 때문에 cost 함수가 log 함수 형태인 크로스엔트로피 함수를 써서 local minima를 없앤다.
+# cost 함수의 최솟값을 찾는 것은 오차를 최소화하기 위한 학습이다.
 def cost(Y_pred, Y, hypothesis):
     with tf.name_scope('cost'):
         cost = -tf.reduce_mean(Y * tf.log(hypothesis) + (1 - Y) * tf.log(1 - hypothesis))
 #    tf.summary.scalar('cross_entropy', cost)
     return cost
-
+    
+# 결과값을 0.5를 기준으로 반환한다.
+# predicted 반환 (0. 또는 1.) dtype=float32
 def predicted(Y_pred,hypothesis):
     predicted = tf.cast(hypothesis > 0.5, dtype=tf.float32)
     return predicted
+# 출력의 예측값과 실제값을 비교하여 정확도를 반환한다.
+# tf.reduce_mean : 예측 성공한 횟수 (1의 개수) / 총 예측한 횟수 
 
 def accuracy(Y_pred, Y, predicted):
     with tf.name_scope('accuracy'):
         accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, Y), dtype=tf.float32))
 #    tf.summary.scalar('accuracy', accuracy)
     return accuracy
-
+    
+# 모델을 학습시키고 학습시킨 결과를 반환한다.
 def training(cost):
     with tf.name_scope('train'):
         optimizer = \
             tf.train.AdamOptimizer(learning_rate=0.001, beta1=0.9, beta2=0.999)
         train_step = optimizer.minimize(cost)
     return train_step
-
+    
+# patience 만큼 loss가 떨어지는지 지켜보다가 patience 내에 loss가 떨어지지 않으면 earlystopping을 한다.
 class EarlyStopping():
     def __init__(self, patience=0, verbose=0):
         self._step = 0
         self._loss = float('inf')
         self.patience = patience
         self.verbose = verbose
-
     def validate(self, loss):
         if self._loss < loss:
             self._step += 1
@@ -270,7 +277,6 @@ class EarlyStopping():
         else:
             self._step = 0
             self._loss = loss
-
         return False
 
     
