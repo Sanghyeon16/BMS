@@ -294,14 +294,14 @@ class EarlyStopping():
 
 if __name__ == '__main__':
     
-    #generate data
+    # generate data
     # train Parameters
     seq_length = 150
-    data_dim = 5 #Vd Irn T P
+    data_dim = 5 # Vd Vm Irn Tn Pn
     hidden_dim = 15
     output_dim = 1
     learning_rate = 0.01
-    iterations = 1500
+    iterations = 1500 # 학습횟수
     
     Min_expectation = 0.9
     sec = 180
@@ -309,30 +309,30 @@ if __name__ == '__main__':
     Volt_min = 3.2
     downSize = 60000
     
-#Preprocessing Order: loadtxt, power_append, Labeling -> V,I,T,P
-#    # Voltage, Current, Temperture
-#    train_n1_s1 = np.loadtxt('RW25_refdis_1.csv', delimiter=',')#Naming Rule: DataUsage_FileNumber_PrepocessingSteps
+# Preprocessing Order: loadtxt, power_append and Labeling -> V I T P
+#    # data(Voltage, Current, Temperture)
+#    train_n1_s1 = np.loadtxt('RW25_refdis_1.csv', delimiter=',') # Naming Rule: DataUsage_FileNumber_PrepocessingSteps
 #    test_s1 = np.loadtxt('RW25_refdis_2.csv', delimiter=',')
     
     train_n1_s1 = np.loadtxt('RW9_RW_1.csv', delimiter=',')
     test_s1 = np.loadtxt('RW9_RW_2.csv', delimiter=',')
     
-    train_n1_s2 = power_append(train_n1_s1) #First training data, power label appending
-    test_s2 = power_append(test_s1) #First testing data, power laberl appending
+    train_n1_s2 = power_append(train_n1_s1) # First training data, power label appending
+    test_s2 = power_append(test_s1) # First testing data, power label appending
 
-    train_n1_s3 = labeling(train_n1_s2, sec)       #train) NG labeling
-    test_s3 = labeling(test_s2, sec)       #test) NG labeling
+    train_n1_s3 = labeling(train_n1_s2, sec)       # train) NG labeling
+    test_s3 = labeling(test_s2, sec)       # test) NG labeling
     
-    train_n1_s4 = rounding(train_n1_s3)#xy1 : train dataset
-    test_s4 = rounding(test_s3)#xy2 : test dataset
+    train_n1_s4 = rounding(train_n1_s3) 
+    test_s4 = rounding(test_s3)
     
     train_n1_s5 = VoltageMinMax(train_n1_s4, Volt_max, Volt_min)
     test_s5 = VoltageMinMax(test_s4, Volt_max, Volt_min)
     print("VmIrTP-Setting------")#---------------------------------------------
     
-    train_n1_s6 = add_Vdelta(train_n1_s5)#VITP -> VdVTIP
+    train_n1_s6 = add_Vdelta(train_n1_s5) # Vm Ir T P -> Vd Vm Ir T P
     test_s6 = add_Vdelta(test_s5)
-    #train_n1_s6 = chage_toVdelta(train_n1_s5)#VITP -> VdITP
+    #train_n1_s6 = chage_toVdelta(train_n1_s5) # V I T P -> Vd I T P
     #test_s6 = chage_toVdelta(test_s5)
     print("Delta Setting-------")#---------------------------------------------    
     
