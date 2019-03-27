@@ -14,110 +14,110 @@ tf.reset_default_graph()
 np.random.seed(0)
 tf.set_random_seed(777)  # reproducibility
 
-# Tensorboard 파일 저장위치 설정
 #LOG_DIR = os.path.join(os.path.dirname(__file__), 'logss')
-#
+##
 #if os.path.exists(LOG_DIR) is False:
 #    os.mkdir(LOG_DIR)
 
-# -1 ~ 1 범위로 정규화
 def MinMaxScalerbyRow(data):
+    #-1 ~ 1 범위로 표준화
     numerator = data - np.min(data, 0)
     denominator = (np.max(data, 0) - np.min(data, 0)) * 0.5
-    return ((numerator) / (denominator + 1e-7)) - 1 # (1e-7: noise를 추가하여 분모가 0이 되는 것을 방지)
+    return ((numerator) / (denominator + 1e-7)) - 1
 
-# 마지막열을 추가하고 그 열에 P=V*I 값 저장
 def power_append(xy):
+    #마지막열을 추가하고 V*I=P 변수를 만듦
     xy = np.c_[xy, np.zeros(int(len(xy)))]
     for i in range(int(len(xy))):
         xy[i][3] = xy[i][0]*xy[i][1]
     return xy    
 
-# 3.2V 이하가 되면 3.2V 이하가 된 시점부터 sec초 시간범위의 NG label 값을 1로 설정
 def labeling(xy, sec):
+    #3.2V가 되면 sec초 이전의 시간까지 NG label 1로 선언
     xy = np.c_[xy, np.zeros(int(len(xy)))]    
     for i in range(int(len(xy))):
-        if (i >= sec):
+        if (i>= sec):
             xy[i][4] = 0
-            if(xy[i][0] <= 3.2):
-                i = i - sec
+            if(xy[i][0]<=3.2):
+                i = i-sec
                 xy[i][4] = 1
                 for k in range(sec) :
                     i = i + 1
                     xy[i][4] = 1
     return xy
 
-# 데이터의 전압 값을 0 ~ 1 범위로 정규화 후, 최소전압 ~ 최대전압 범위로 다시 정규화
 def VoltageMinMax(data, max_val, min_val):
-    datav = data[:, 0:1]
+    datav = data[:,0:1]
+    
     numerator = datav - np.min(datav,0)
-    denominator = np.max(datav, 0) - np.min(datav, 0)
+    denominator = np.max(datav, 0) - np.min(datav,0)
     datanv = numerator / (denominator + 1e-7)
-    data[:, 0:1] = (datanv * (max_val - min_val)) + min_val
+    data[:,0:1] = (datanv * (max_val - min_val)) + min_val
     return data
     
-# 전압 레이블을 이전과 현재의 전압의 차이인 Vd로 변경하여 데이터의 레이블을 다음과 같이 설정. (Vd, I, T, P)
+
 def chage_toVdelta(Xdata): 
+    #label : Vd,V,I,T,P 5개
     for i in range(int(len(Xdata)) - 1):
         Xdata[i][0] = (Xdata[i + 1][0] - Xdata[i][0])
-    Xdata[i + 1][0] = Xdata[i][0]
+    Xdata[i+1][0] = Xdata[i][0]
     return Xdata
 
-# 데이터의 레이블을 다음과 같이 설정. (Vd, V, I, T, P) 
 def add_Vdelta(Xdata):
+    #label: Vd,I,T,P 4개
     delta_data = np.zeros((int(len(Xdata)), 1))
     delta_data = Xdata.copy()
-    delta_data = np.insert(delta_data, 0, 0, axis=1)
+    delta_data = np.insert(delta_data, 0, 0,axis=1)
     for i in range(int(len(Xdata)) - 1):
         delta_data[i][0] = (Xdata[i + 1][0] - Xdata[i][0])
-    delta_data[i + 1][0] = delta_data[i][0]
+    delta_data[i+1][0] = delta_data[i][0]
     return delta_data
     
-# 전류 값 반올림
+    
 def rounding(Xdata):
     for i in range(int(len(Xdata))):
-        Xdata[i][1] = round(Xdata[i][1],2) # I
+        #Xdata[i][0] = round(Xdata[i][0],2)#V
+        Xdata[i][1] = round(Xdata[i][1],2)#I
+        #Xdata[i][2] = round(Xdata[i][2],2)#T
+        #Xdata[i][3] = round(Xdata[i][3],2)#P
     return Xdata
     
-# 데이터의 열 삭제    
 def erasing(Xdata):
     data4X = np.delete(Xdata, 4, axis = 1)
     data3X = np.delete(data4X, 3, axis = 1)
     data2X = np.delete(data3X, 2, axis = 1)
-    return np.delete(data2X, 1, axis = 1)
-
-# NG 값이 1인 갯수, NG 값이 0인 갯수 반환. data_dim(데이터의 열 수)
+    return np.delete(data2X, 1, axis=1)
+    
 def NG_count(xy, data_dim):
     j = 0
     for i in range(int(len(xy))):
-        if (xy[i][data_dim] == 1):
+        if (xy[i][data_dim] == 1):#---------------------------------
             j = j + 1
-    return j, int(len(xy)) - j 
+    return j, int(len(xy))-j 
 
-# 2차원의 데이터를 seq_length 크기만큼 분할하고 분할한 것들을 하나씩 쌓아 올려 3차원 데이터 생성
+
 def build_dataset(time_series, seq_length, data_dim):
     dataX = []
     dataY = []
     for i in range(0, len(time_series) - seq_length):
-        _x = time_series[i:i + seq_length, 0:data_dim]
+        _x = time_series[i:i + seq_length, 0:data_dim]#---------------
         _y = time_series[i + seq_length - 1, [-1]]
         #print(_x, "->", _y)
         dataX.append(_x)
         dataY.append(_y)
     return np.array(dataX), np.array(dataY)
 
-# NG 값이 0인 데이터와 NG 값이 1인 데이터의 비율을 1:1 로 맞춘다.
 def balancing(Xdata, Ydata, Max):    
     databX = []
     databY = []
-    j = 0
-    k = 0
+    j=0
+    k=0
     leng = int(len(Ydata))
-    randomRow = np.arange(leng) 
-    random.shuffle(randomRow) # shuffle
+    #np.random.seed(0)
+    randomRow = np.arange(leng)  ## 갯수 다시 생각
+    random.shuffle(randomRow)
     for i in randomRow:
-        # 임의의 순번 중 NG가 0인 순번의 데이터를 NG1인 데이터의 수만큼 새롭게 쌓는다.
-        if Ydata[randomRow[i]] == 0:   
+        if Ydata[randomRow[i]] == 0:   #임의의 순번 중 NG가 0인 순번의 데이터를 NG1인 데이터의 수만큼 새롭게 쌓는다.
             if j < Max: 
                 _x1 = Xdata[randomRow[i],:]
                 _y1 = Ydata[randomRow[i],:]
@@ -136,41 +136,42 @@ def balancing(Xdata, Ydata, Max):
             
     return np.array(databX), np.array(databY)
 
-# 데이터 병합
 def combine(xy1_x, xy1_y, xy2_x, xy2_y):
+#    dataX = []
+#    dataY = []
+#    dataX.append(xy1_x)
+#    dataY.append(xy1_y)
     dataX = np.vstack([np.array(xy1_x), np.array(xy2_x)])
     dataY = np.vstack([np.array(xy1_y), np.array(xy2_y)])
     
     return dataX, dataY
     
-# 데이터 스케일링(전류, 온도, 전력 정규화)
-def Scaling_dataset(dataX): # dataX(7000,100,4)
-    for i in range(dataX.shape[0]):
-        dataX[i,:,2:5] = MinMaxScalerbyRow(dataX[i,:,2:5])
-    return dataX  
 
-# 기존의 데이터의 값들을 무작위로 섞어 재배열
+def Scaling_dataset(dataX):# (7000,100,4)
+    for i in range(dataX.shape[0]):
+        dataX[i,:,2:5] = MinMaxScalerbyRow(dataX[i,:,2:5])#-1~1 normalizing [0,1,2,3,4,5]:[1,2,3,4,5,6]
+    return dataX  
+    
 def shuffle_dataset(dataX,dataY):
+    
     shuffle = np.arange(dataY.shape[0])
     np.random.shuffle(shuffle)
     datasX = dataX[shuffle]
     datasY = dataY[shuffle]
     return datasX, datasY
 
-# leng 크기만큼 샘플 크기를 줄임
 def sampleSizeDown(Xdata, Ydata, leng):
     dataX = []
     dataY = []
     
     for i in range(0, leng):
-        _x = Xdata[i, :, :]
-        _y = Ydata[i, :]
+        _x = Xdata[i,:,:]
+        _y = Ydata[i,:]
         dataX.append(_x)
         dataY.append(_y)
         
     return np.array(dataX), np.array(dataY)
-
-# 데이터를 3등분하여 반환
+    
 def sampledivide(Xdata, Ydata):
     data1X = []
     data2X = []
@@ -200,19 +201,14 @@ def sampledivide(Xdata, Ydata):
 
 #%% Model Training Function Define
 
-
-# 모델 전체를 설정하고 모델의 출력(예측결과)을 반환한다.
-# 생성한 셀과 입력을 토대로 RNN 구조를 생성한다. 이때, output과 마지막 상태를 반환한다.
-# 이때 각 입출력의 데이터 크기는 X[7579,100,5] outputs[7579,100,10] 이고 state는 매 셀마다 넘겨주는 내부 오차 값이다.
 def inference(X, seq_length=None, hidden_dim=None, output_dim=None):
+
+    
+    
     cell = tf.contrib.rnn.LSTMCell(hidden_dim, forget_bias=1.0)
     outputs, _states = tf.nn.dynamic_rnn(cell, X, dtype=tf.float32)
     
-    #-------1. fully connected method-------
-    # hidden dim 크기의 outputs의 차원을 1차원으로 바꿔준다.
-    # Fully connected는 마지막 출력을 확률 값으로 변환하여(즉, 모든 출력값을 0~1 사이로 변환하여 전체 합이 1이 되게 한다.)
-    # 여러 개의 레이블 중 한 개를 선택한다. 
-    # 이렇게 Y_pred [7579, 1] 형태의 예측값이 출력된다.
+    #-------1. fully connected method-------   
     Y_pred = tf.contrib.layers.fully_connected(
            outputs[:, -1], output_dim, activation_fn=None)  # We use the last cell's output
     
@@ -234,33 +230,22 @@ def inference(X, seq_length=None, hidden_dim=None, output_dim=None):
 
     return Y_pred
 
-
-# 모델의 오차함수를 정의하고 그 값을 반환한다.
-# cross_entropy 함수 이용 (예측한 값이 실제 값과 차이가 크면 cost 값이 크게 나타나고 예측한 값이 실제 값과 유사하면 cost 값이 작게 나타난다.) 
-# 크로스 엔트로피 함수를 사용한 이유는 Hypothesis 함수가 시그모이드 함수를 거쳐서 0과 1사이의 값을 갖게 되고, 
-# cost 함수에 local minima가 생기기 때문에 cost 함수가 log 함수 형태인 크로스엔트로피 함수를 써서 local minima를 없앤다.
-# cost 함수의 최솟값을 찾는 것은 오차를 최소화하기 위한 학습이다.
 def cost(Y_pred, Y, hypothesis):
     with tf.name_scope('cost'):
         cost = -tf.reduce_mean(Y * tf.log(hypothesis) + (1 - Y) * tf.log(1 - hypothesis))
 #    tf.summary.scalar('cross_entropy', cost)
     return cost
 
-# 결과값을 0.5를 기준으로 반환한다.
-# predicted 반환 (0. 또는 1.) dtype=float32
 def predicted(Y_pred,hypothesis):
     predicted = tf.cast(hypothesis > 0.5, dtype=tf.float32)
     return predicted
 
-# 출력의 예측값과 실제값을 비교하여 정확도를 반환한다.
-# tf.reduce_mean : 예측 성공한 횟수 (1의 개수) / 총 예측한 횟수 
 def accuracy(Y_pred, Y, predicted):
     with tf.name_scope('accuracy'):
         accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, Y), dtype=tf.float32))
 #    tf.summary.scalar('accuracy', accuracy)
     return accuracy
 
-# 모델을 학습시키고 학습시킨 결과를 반환한다.
 def training(cost):
     with tf.name_scope('train'):
         optimizer = \
@@ -268,7 +253,6 @@ def training(cost):
         train_step = optimizer.minimize(cost)
     return train_step
 
-# patience 만큼 loss가 떨어지는지 지켜보다가 patience 내에 loss가 떨어지지 않으면 earlystopping을 한다.
 class EarlyStopping():
     def __init__(self, patience=0, verbose=0):
         self._step = 0
@@ -293,193 +277,181 @@ class EarlyStopping():
 #%%
 
 if __name__ == '__main__':
-    
-    # generate data
-    # train Parameters
+
+#Parameters
+    #Valuating time period
     seq_length = 150
-    data_dim = 5 # Vd Vm Irn Tn Pn
-    hidden_dim = 15
-    output_dim = 1
-    learning_rate = 0.01
-    iterations = 1500 # 학습횟수
     
-    Min_expectation = 0.9
-    sec = 180
-    Volt_max = 4.082
-    Volt_min = 3.2
-    downSize = 60000
+    #Vd: Vm's gradient, Vm: normallized by standard MIXMAX, Irn: I rounded and normalized, Tn: T normalized, Pn: P noramlied
+    data_dim = 5 #Vd Vm Irn Tn Pn 
     
-# Preprocessing Order: loadtxt, power_append and Labeling -> V I T P
-#    # data(Voltage, Current, Temperture)
-#    train_n1_s1 = np.loadtxt('RW25_refdis_1.csv', delimiter=',') # Naming Rule: DataUsage_FileNumber_PrepocessingSteps
-#    test_s1 = np.loadtxt('RW25_refdis_2.csv', delimiter=',')
+    hidden_dim = 15         #RNN outputs which will be choosen by fully connected layer
+    output_dim = 1          #Y_pred's dimension
+    iterations = 1500       #Number of learning
     
+    sec = 180               #Remaining time before 3.2V
+    Volt_max = 4.082        #Maximum Value of Voltage
+    Volt_min = 3.2          #Minimum Value of Voltage
+    downSize = 60000        #Reducing size when OOM error happens.
+    
+#Data preprocessing
+    #Preprocessing Order: loadtxt, power_append, Labeling -> V,I,T,P
+    #   Naming Rule: DataUsage_FileNumber_PrepocessingSteps
+    
+    #Reference Discharge Dataset [Voltage, Current, Temperture]
+    #train_n1_s1 = np.loadtxt('RW25_refdis_1.csv', delimiter=',')
+    #test_s1 = np.loadtxt('RW25_refdis_2.csv', delimiter=',')
+    
+    #RandomWalk Charge and Discharge Dataset [Voltage, Current, Temperture]
     train_n1_s1 = np.loadtxt('RW9_RW_1.csv', delimiter=',')
     test_s1 = np.loadtxt('RW9_RW_2.csv', delimiter=',')
     
-    train_n1_s2 = power_append(train_n1_s1) # First training data, power label appending
-    test_s2 = power_append(test_s1) # First testing data, power label appending
+    train_n1_s2 = power_append(train_n1_s1)     #Number 1 training data, power label appending
+    test_s2 = power_append(test_s1)             #Test data, power laberl appending
 
-    train_n1_s3 = labeling(train_n1_s2, sec)       # train) NG labeling
-    test_s3 = labeling(test_s2, sec)       # test) NG labeling
+    train_n1_s3 = labeling(train_n1_s2, sec)    #Number 1 training data, NG label appending
+    test_s3 = labeling(test_s2, sec)            #Test data, NG label appending
     
-    train_n1_s4 = rounding(train_n1_s3) 
-    test_s4 = rounding(test_s3)
+    train_n1_s4 = rounding(train_n1_s3)         #Number 1 training data, I value rounding
+    test_s4 = rounding(test_s3)                 #Test data, I value rounding
     
-    train_n1_s5 = VoltageMinMax(train_n1_s4, Volt_max, Volt_min)
-    test_s5 = VoltageMinMax(test_s4, Volt_max, Volt_min)
-    print("VmIrTP-Setting------")#---------------------------------------------
+    train_n1_s5 = VoltageMinMax(train_n1_s4, Volt_max, Volt_min)        #Number 1 training data, V value MinMax Scaling
+    test_s5 = VoltageMinMax(test_s4, Volt_max, Volt_min)                #Test data, V value MinMax Scaling
     
-    train_n1_s6 = add_Vdelta(train_n1_s5) # Vm Ir T P -> Vd Vm Ir T P
-    test_s6 = add_Vdelta(test_s5)
-    #train_n1_s6 = chage_toVdelta(train_n1_s5) # V I T P -> Vd I T P
-    #test_s6 = chage_toVdelta(test_s5)
-    print("Delta Setting-------")#---------------------------------------------    
+    train_n1_s6 = add_Vdelta(train_n1_s5)       #Number 1 training data, Vd label Inserting [Vd Vm Ir T P]
+    test_s6 = add_Vdelta(test_s5)               #Test data, Vd label Inserting [Vd Vm Ir T P]
     
-    #train_n1_s7 = erasing(train_n1_s6)
-    #test_s7 = erasing(test_s6)
-    #print("erasing------------")#----------------------------------------------
+    """
+    #When editing the labels
+    #train_n1_s6 = chage_toVdelta(train_n1_s5)  #Number 1 training data, Vm to Vd label changing [Vd Ir T P]
+    #test_s6 = chage_toVdelta(test_s5)          #Test data, Vm to Vd label changing [Vd Ir T P]
     
-    j1_n1, j0_n1 = NG_count(train_n1_s6, data_dim)      #train) NG counting
-    k1, k0 = NG_count(test_s6, data_dim)          #test) NG counting
-    print("NG_count------------")#---------------------------------------------
+    #train_n1_s7 = erasing(train_n1_s6)         #Number 1 training data, label erasing
+    #test_s7 = erasing(test_s6)                 #Test data, label erasing
+    """
     
-    # training data
-    N_train_1 = int(len(train_n1_s6))
-    train_set_1 = train_n1_s6[0:N_train_1]
+    j1_n1, j0_n1 = NG_count(train_n1_s6, data_dim)      #Number 1 training data, NG label values(1,0) counting
+    k1, k0 = NG_count(test_s6, data_dim)                #Test data, NG label values(1,0) counting
+    #Input Data labeling Finished
     
-    train_built_X, train_built_Y = build_dataset(train_set_1, seq_length, data_dim) 
-    train_scaled_X = Scaling_dataset(train_built_X)#After build_dataset
+    #Training data transformation
+    N_train_1 = int(len(train_n1_s6))           #Checking the length of Training data
+    train_set_1 = train_n1_s6[0:N_train_1]      #Indexing
     
-    #test data
-    N_test = int(len(test_s6))
-    test_set = test_s6[0:N_test]
+    train_built_X, train_built_Y = build_dataset(train_set_1, seq_length, data_dim)     #Training Dataset building
     
-    test_built_X, test_built_Y = build_dataset(test_set, seq_length,data_dim)
-    test_scaled_X = Scaling_dataset(test_built_X)
-    print("Build_dataset------")#----------------------------------------------
+    train_scaled_X = Scaling_dataset(train_built_X)     #[Ir T P] labels normalizing to [Irn Tn Pn]
     
-#    trainbX_1, trainbY_1 = balancing(train1X_1, train1Y_1, j1_1)
-#    trainbX_3, trainbY_3 = balancing(train1X_3, train1Y_3, j1_3)
-#    trainbX_5, trainbY_5 = balancing(train1X_5, train1Y_5, j1_5)
-#    trainbX_7, trainbY_7 = balancing(train1X_7, train1Y_7, j1_7)
-#    trainbX_9, trainbY_9 = balancing(train1X_9, train1Y_9, j1_9)
-#    trainbX_11, trainbY_11 = balancing(train1X_11, train1Y_11, j1_11)
-#    trainbX_13, trainbY_13 = balancing(train1X_13, train1Y_13, j1_13)
-    #print("Balancing-------------")#-------------------------------------------
+    #Test data transformation
+    N_test = int(len(test_s6))                  #Checking the length of Training data
+    test_set = test_s6[0:N_test]                #Indexing
     
-#    trainc3X, trainc3Y = combine(trainbX_1, trainbY_1,trainbX_3, trainbY_3)
-#    trainc5X, trainc5Y = combine(trainc3X, trainc3Y, trainbX_5, trainbY_5)
-#    trainc7X, trainc7Y = combine(trainbX_1, trainbY_1, trainbX_7, trainbY_7)
-#    trainc9X, trainc9Y = combine(trainc7X, trainc7Y, trainbX_9, trainbY_9)
-#    trainc11X, trainc11Y = combine(trainc9X, trainc9Y, trainbX_11, trainbY_11)
-#    trainc13X, trainc13Y = combine(trainc7X, trainc7Y, trainbX_13, trainbY_13)
-    #print("Combining-------------")#-------------------------------------------
-
+    test_built_X, test_built_Y = build_dataset(test_set, seq_length,data_dim)           #Test Dataset building
+    test_scaled_X = Scaling_dataset(test_built_X)       #[Ir T P] labels normalizing to [Irn Tn Pn]
+    
+    #trainbX_1, trainbY_1 = balancing(train1X_1, train1Y_1, j1_1)
+    
+    """
+    #When we combine various dataset 
+    #trainc3X, trainc3Y = combine(trainbX_1, trainbY_1,trainbX_3, trainbY_3)
+    #trainc5X, trainc5Y = combine(trainc3X, trainc3Y, trainbX_5, trainbY_5)
+    #trainc7X, trainc7Y = combine(trainbX_1, trainbY_1, trainbX_7, trainbY_7)
+    #trainc9X, trainc9Y = combine(trainc7X, trainc7Y, trainbX_9, trainbY_9)
+    #trainc11X, trainc11Y = combine(trainc9X, trainc9Y, trainbX_11, trainbY_11)
+    #trainc13X, trainc13Y = combine(trainc7X, trainc7Y, trainbX_13, trainbY_13)
+    """
+    
+    """
+    #Training sample sizing down when Out of Memory error occurred
     #traindX, traindY = sampleSizeDown(trainsdX, train1Y_1, downSize)
-    #print("SampleSizeDown--------")#-------------------------------------------
-    
-    
-    #print("DatasetShuffling------")#-------------------------------------------
-
+    """
+    #Randomly shuffled tree different Test dataset building
+    #   balancing NG value size 1:1('0':'1') and randomly selecting data which has NG value '0'
+    #   Shuffling their orders
     test_balanced_X_1, test_balanced_Y_1 = copy.deepcopy(balancing(test_scaled_X, test_built_Y, k1))
     test_balanced_X_2, test_balanced_Y_2 = copy.deepcopy(balancing(test_scaled_X, test_built_Y, k1))
     test_balanced_X_3, test_balanced_Y_3 = copy.deepcopy(balancing(test_scaled_X, test_built_Y, k1))
-    
     testX_1, testY_1 = shuffle_dataset(test_balanced_X_1, test_balanced_Y_1)
     testX_2, testY_2 = shuffle_dataset(test_balanced_X_2, test_balanced_Y_2)
     testX_3, testY_3 = shuffle_dataset(test_balanced_X_3, test_balanced_Y_3)
-    print("test data Setting------")#------------------------------------------
     
     
     
-    print("Model Architecture Generating------")#------------------------------
-    # input place holders
+#Model Architecture Generation
+    #Input place holders
     X = tf.placeholder(tf.float32, [None, seq_length, data_dim], name='X')
     Y = tf.placeholder(tf.float32, [None, 1], name='Y')
     
-    # build a LSTM network
+    #LSTM network build
     Y_pred = inference(X, seq_length=seq_length, hidden_dim=hidden_dim,output_dim=output_dim)
-    print("Model output prediction check------")#------------------------------
     
-    # cost/loss    
-    #hypothesis = tf.div(1., 1. + tf.exp(-Y_pred))
+    #Hypothesis
     hypothesis = tf.sigmoid(Y_pred)
-    #cross_entropy
-    cost = cost(Y_pred, Y, hypothesis)
-    # optimizer
-    train = training(cost)
-    print("Model train and loss function check")#------------------------------
     
+    #Cross_entropy
+    cost = cost(Y_pred, Y, hypothesis)
+    
+    #Optimizer
+    train = training(cost)
+    
+    #Accuracy
     predicted = predicted(Y_pred, hypothesis)
     accuracy = accuracy(Y_pred, Y, predicted)
-    print("Accuracy function check------------")#------------------------------
 
-    # RMSE
+    #RMSE
     targets = tf.placeholder(tf.float32, [None, 1])
     predictions = tf.placeholder(tf.float32, [None, 1])
     rmse = tf.sqrt(tf.reduce_mean(tf.square(targets - predictions)))
-    print("RMSE function check----------------")#------------------------------
     
-    #early_stopping_A = EarlyStopping(patience=40, verbose=1)
-    early_stopping20 = EarlyStopping(patience=20, verbose=1)
-    early_stopping10 = EarlyStopping(patience=10, verbose=1)
-    early_stopping30 = EarlyStopping(patience=30, verbose=1)
-    trig30 = 1
-    trig20 = 1
-    trig10 = 1
-    epoch1 =0
-    epoch2 =0
-    epoch3 =0
-    cost1 =0
-    cost2 =0
-    cost3 =0
-    a_temp10 = 0
-    a_temp20 = 0
-    a_temp30 = 0
-    #Absolute_a = np.zeros(iterations,int)
-    Absolute_a_1 = []
+    #Accuracy_test Parameters initialization
+    Absolute_a_1 = []               #Accuracy tested by test dataset no.1
     Absolute_a_1_epoch = 0
-    Absolute_a_1_max = 0
+    Absolute_a_1_max = 0            #Recording 'epoch' when the Absolute_a has maximum value
     Absolute_a_2 = []
     Absolute_a_2_epoch = 0
     Absolute_a_2_max = 0
     Absolute_a_3 = []
     Absolute_a_3_epoch = 0
     Absolute_a_3_max = 0
-    cnt = 0
-    triggg = 0
     
+    #initialization
     init = tf.global_variables_initializer()
-    
     saver = tf.train.Saver() #saver init
-        
+    
+    #Saving operations
     for op in (X, Y, Y_pred, hypothesis, cost, train, predicted, accuracy, targets, predictions, rmse):
         tf.add_to_collection("my_important_ops", op)
-
-    #saver = tf.train.import_meta_graph("./my_model_1.ckpt.meta")    #load meta file of saved model
-#    X, Y, Y_pred, hypothesis, cost, train, predicted, accuracy, targets, predictions, rmse = tf.get_collection("my_important_ops")
     
-    print("Save operation collection check-----")#-----------------------------
-
-
-    #Train Model
+    """
+    #When we didn't define the operations and testing sess only
+    #saver = tf.train.import_meta_graph("./my_model_1.ckpt.meta")    #load meta file of saved model
+    #X, Y, Y_pred, hypothesis, cost, train, predicted, accuracy, targets, predictions, rmse = tf.get_collection("my_important_ops")
+    """
+    
+#Training Monitor
     with tf.Session() as sess:
 
-#        merged_summary = tf.summary.merge_all()
-#        file_writer = tf.summary.FileWriter(LOG_DIR, sess.graph)
+        """
+        #When we want to monitor the structures and process on Tensorboard
+        #merged_summary = tf.summary.merge_all()
+        #file_writer = tf.summary.FileWriter(LOG_DIR, sess.graph)
+        """
         
+        sess.run(init)      #sess initialization
         
-        sess.run(init)
-        
-        # Training step
+        #Training Start
         for epoch in range(iterations):
-            train_balanced_X_1, train_balanced_Y_1 = balancing(train_scaled_X, train_built_Y, j1_n1)
-            train_shuffled_X, train_shuffled_Y = shuffle_dataset(train_balanced_X_1,train_balanced_Y_1) #학습할 때마다 섞기
-            #trainsdX, trainsdY = sampleSizeDown(trainscX, trainY)
+            #On each epoch, training data will randomly be set
+            train_balanced_X_1, train_balanced_Y_1 = balancing(train_scaled_X, train_built_Y, j1_n1)    
+            train_shuffled_X, train_shuffled_Y = shuffle_dataset(train_balanced_X_1,train_balanced_Y_1)
+            
+            """
+            #trainsdX, trainsdY = sampleSizeDown(trainscX, trainY) #when OOM error happens, data size will be reduced
+            """
+            #Dividing dataset to train all the data (avoiding OOM error)
             train_div1_X, train_div1_Y, train_div2_X, train_div2_Y, train_div3_X, train_div3_Y =  sampledivide(train_shuffled_X, train_shuffled_Y)
             
-            
+            #batch theory
             c_1, _ = sess.run([cost, train], feed_dict={
                 X: train_div1_X,
                 Y: train_div1_Y,
@@ -488,81 +460,64 @@ if __name__ == '__main__':
                 X: train_div2_X,
                 Y: train_div2_Y,
                 })
-            c_3, _ = sess.run([cost, train], feed_dict={
+            a_1, c_3, _ = sess.run([accuracy, cost, train], feed_dict={
                 X: train_div3_X,
                 Y: train_div3_Y,
                 })
             
-#            summary = sess.run(merged_summary,feed_dict={X:trainX, Y:trainY})
-                
-            print('epoch: ', epoch,' cost_val: ', 'cost_val1: ', c_1,'cost_val2: ', c_2,'cost_val3: ', c_3)
+            """"
+            #when we use Tensorboard, it will summarlize the records
+            #summary = sess.run(merged_summary,feed_dict={X:trainX, Y:trainY})
+            """
             
-            Absolute_A_1= sess.run(accuracy, feed_dict={X:testX_1, Y:testY_1})
+            #The final cost of each epoch is c_3
+            print('epoch: ', epoch,' cost_val1: ', 'cost_val1: ', c_1,'cost_val2: ', c_2,'cost_val3: ', c_3, '\naccuracy_val: ', a_1)
+            
+            #evaluate via No.1 test dataset----------------------------------------------------------
+            Absolute_A_1, Absolute_c_1 = sess.run([accuracy, cost], feed_dict={X:testX_1, Y:testY_1})
             _ab_a_1 = Absolute_A_1
-            Absolute_a_1.append(_ab_a_1)
-
-            print('temp accuracy_1: ', Absolute_a_1[epoch])
+            Absolute_a_1.append(_ab_a_1)        #Recording accuracy
             
+            print('temp accuracy_test_1: ', Absolute_A_1,' temp cost_test_1: ', Absolute_c_1)
+            
+            #Saving the sess when Accuracy is higher then the accuracy of previous epoch
             if Absolute_a_1[epoch] >= Absolute_a_1_max:
                 Absolute_a_1_max = copy.deepcopy(Absolute_a_1[epoch])
                 Absolute_a_1_epoch = copy.deepcopy(epoch)
-                Absolute_a_1_cost = copy.deepcopy(c_3)
                 save_path = saver.save(sess, "./my_model_RW_1_{}.ckpt".format(epoch))
-            Absolute_A_2= sess.run(accuracy, feed_dict={X:testX_2, Y:testY_2})
+                
+            #evaluate via No.2 test dataset----------------------------------------------------------
+            Absolute_A_2, Absolute_c_2= sess.run([accuracy, cost], feed_dict={X:testX_2, Y:testY_2})
             _ab_a_2 = Absolute_A_2
             Absolute_a_2.append(_ab_a_2)
 
-            print('temp accuracy_2: ', Absolute_a_2[epoch])
+            print('temp accuracy_test_2: ', Absolute_A_2,' temp cost_test_2: ', Absolute_c_2)
             
+            #Saving the sess when Accuracy is higher then the accuracy of previous epoch
             if Absolute_a_2[epoch] >= Absolute_a_2_max:
                 Absolute_a_2_max = copy.deepcopy(Absolute_a_2[epoch])
                 Absolute_a_2_epoch = copy.deepcopy(epoch)
-                Absolute_a_2_cost = copy.deepcopy(c_3)
                 save_path = saver.save(sess, "./my_model_RW_2_{}.ckpt".format(epoch))   #save first trained model
             
-            Absolute_A_3= sess.run(accuracy, feed_dict={X:testX_3, Y:testY_3})
+            #evaluate via No.3 test dataset----------------------------------------------------------
+            Absolute_A_3, Absolute_c_3= sess.run([accuracy, cost], feed_dict={X:testX_3, Y:testY_3})
             _ab_a_3 = Absolute_A_3
             Absolute_a_3.append(_ab_a_3)
 
-            print('temp accuracy_3: ', Absolute_a_3[epoch])
+            print('temp accuracy_test_3: ', Absolute_A_3,' temp cost_test_3: ', Absolute_c_3)
             
+            #Saving the sess when Accuracy is higher then the accuracy of previous epoch
             if Absolute_a_3[epoch] >= Absolute_a_3_max:
                 Absolute_a_3_max = copy.deepcopy(Absolute_a_3[epoch])
                 Absolute_a_3_epoch = copy.deepcopy(epoch)
-                Absolute_a_3_cost = copy.deepcopy(c_3)
                 save_path = saver.save(sess, "./my_model_RW_3_{}.ckpt".format(epoch))  
             
+            """
+            #Saving summary as a file to watch on the Tensorboard
             #file_writer.add_summary(summary, global_step = epoch)
-            #save_path = saver.save(sess, "./my_model_0304.ckpt")   #save first trained model
-
-            # Early Stopping 검사
-            #if early_stopping.validate(cost_val3):
-            #    break
+            """
             
-#            if early_stopping10.validate(cost_val3) and (trig10 == 1):
-#                a_temp10 = sess.run(accuracy,feed_dict={X:testX, Y:testY})
-#                print('early_stopping')
-#                print("\ntemp10_accuracy: ", a_temp10)
-#                epoch1 = epoch
-#                cost1 = cost_val3
-#                trig10 = 0
-#            
-#            if early_stopping20.validate(cost_val3) and (trig20 == 1):
-#                a_temp20 = sess.run(accuracy,feed_dict={X:testX, Y:testY})
-#                print('early_stopping')
-#                print("\nTemp20_accuracy: ", a_temp20)
-#                epoch2 = epoch
-#                cost2 = cost_val3
-#                trig20 = 0
-##                            
-#            if early_stopping30.validate(cost_val3) and (trig30 == 1):
-#                a_temp30 = sess.run(accuracy,feed_dict={X:testX, Y:testY})
-#                print('early_stopping')
-#                print("\ntemp30_accuracy: ", a_temp30)
-#                epoch3 = epoch
-#                cost3 = cost_val3
-#                trig30 = 0
-        
+        #Training Finished and Finding the finest sess
         if Absolute_a_1_max > Absolute_a_2_max and Absolute_a_1_max > Absolute_a_3_max:
             Absolute_a_epoch = Absolute_a_1_epoch
             sess_number = 1
@@ -572,24 +527,16 @@ if __name__ == '__main__':
         else:
             Absolute_a_epoch = Absolute_a_3_epoch
             sess_number = 3
-            
+        
+        #restore the finest sess
         saver.restore(sess, "./my_model_{}_{}.ckpt".format(sess_number ,Absolute_a_epoch))  
 
-       
-        print("Train complete, Test start------")#-----------------------------
-        
-        # Test step
+        #Evaluating the trained model
         test_predict = sess.run(hypothesis, feed_dict={X: testX_1})
         rmse_val = sess.run(rmse, feed_dict={
                         targets: testY_1, predictions: test_predict})
 
         a, c = sess.run([accuracy, cost], feed_dict={X:testX_1,Y:testY_1})
-#        print("Epoch: ",epoch1, " cost_val: ", cost1)
-#        print("Temp10_accuracy: ", a_temp10)
-#        print("Epoch: ",epoch2, " cost_val: ", cost2)
-#        print("Temp20_accuracy: ", a_temp20)
-#        print("Epoch: ",epoch3, " cost_val: ", cost3)
-#        print("Temp30_accuracy: ", a_temp30)
         
         print("\nEpoch: ",Absolute_a_epoch, " cost_val: ", c)
         print("Finanl Accuracy: ",a)
