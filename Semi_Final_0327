@@ -1,0 +1,591 @@
+
+
+import tensorflow as tf
+import numpy as np
+import random
+import copy
+
+import matplotlib.pyplot as plt
+
+#%% Data Preprocessing Define
+
+tf.reset_default_graph()
+
+np.random.seed(0)
+tf.set_random_seed(777)  # reproducibility
+
+#LOG_DIR = os.path.join(os.path.dirname(__file__), 'logss')
+##
+#if os.path.exists(LOG_DIR) is False:
+#    os.mkdir(LOG_DIR)
+
+def MinMaxScalerbyRow(data):
+    #-1 ~ 1 범위로 표준화
+    numerator = data - np.min(data, 0)
+    denominator = (np.max(data, 0) - np.min(data, 0)) * 0.5
+    return ((numerator) / (denominator + 1e-7)) - 1
+
+def power_append(xy):
+    #마지막열을 추가하고 V*I=P 변수를 만듦
+    xy = np.c_[xy, np.zeros(int(len(xy)))]
+    for i in range(int(len(xy))):
+        xy[i][3] = xy[i][0]*xy[i][1]
+    return xy    
+
+def labeling(xy, sec):
+    #3.2V가 되면 sec초 이전의 시간까지 NG label 1로 선언
+    xy = np.c_[xy, np.zeros(int(len(xy)))]    
+    for i in range(int(len(xy))):
+        if (i>= sec):
+            xy[i][4] = 0
+            if(xy[i][0]<=3.2):
+                i = i-sec
+                xy[i][4] = 1
+                for k in range(sec) :
+                    i = i + 1
+                    xy[i][4] = 1
+    return xy
+
+def VoltageMinMax(data, max_val, min_val):
+    datav = data[:,0:1]
+    
+    numerator = datav - np.min(datav,0)
+    denominator = np.max(datav, 0) - np.min(datav,0)
+    datanv = numerator / (denominator + 1e-7)
+    data[:,0:1] = (datanv * (max_val - min_val)) + min_val
+    return data
+    
+
+def chage_toVdelta(Xdata): 
+    #label : Vd,V,I,T,P 5개
+    for i in range(int(len(Xdata)) - 1):
+        Xdata[i][0] = (Xdata[i + 1][0] - Xdata[i][0])
+    Xdata[i+1][0] = Xdata[i][0]
+    return Xdata
+
+def add_Vdelta(Xdata):
+    #label: Vd,I,T,P 4개
+    delta_data = np.zeros((int(len(Xdata)), 1))
+    delta_data = Xdata.copy()
+    delta_data = np.insert(delta_data, 0, 0,axis=1)
+    for i in range(int(len(Xdata)) - 1):
+        delta_data[i][0] = (Xdata[i + 1][0] - Xdata[i][0])
+    delta_data[i+1][0] = delta_data[i][0]
+    return delta_data
+    
+    
+def rounding(Xdata):
+    for i in range(int(len(Xdata))):
+        #Xdata[i][0] = round(Xdata[i][0],2)#V
+        Xdata[i][1] = round(Xdata[i][1],2)#I
+        #Xdata[i][2] = round(Xdata[i][2],2)#T
+        #Xdata[i][3] = round(Xdata[i][3],2)#P
+    return Xdata
+    
+def erasing(Xdata):
+    data4X = np.delete(Xdata, 4, axis = 1)
+    data3X = np.delete(data4X, 3, axis = 1)
+    data2X = np.delete(data3X, 2, axis = 1)
+    return np.delete(data2X, 1, axis=1)
+    
+def NG_count(xy, data_dim):
+    j = 0
+    for i in range(int(len(xy))):
+        if (xy[i][data_dim] == 1):#---------------------------------
+            j = j + 1
+    return j, int(len(xy))-j 
+
+
+def build_dataset(time_series, seq_length, data_dim):
+    dataX = []
+    dataY = []
+    for i in range(0, len(time_series) - seq_length):
+        _x = time_series[i:i + seq_length, 0:data_dim]#---------------
+        _y = time_series[i + seq_length - 1, [-1]]
+        #print(_x, "->", _y)
+        dataX.append(_x)
+        dataY.append(_y)
+    return np.array(dataX), np.array(dataY)
+
+def balancing(Xdata, Ydata, Max):    
+    databX = []
+    databY = []
+    j=0
+    k=0
+    leng = int(len(Ydata))
+    #np.random.seed(0)
+    randomRow = np.arange(leng)  ## 갯수 다시 생각
+    random.shuffle(randomRow)
+    for i in randomRow:
+        if Ydata[randomRow[i]] == 0:   #임의의 순번 중 NG가 0인 순번의 데이터를 NG1인 데이터의 수만큼 새롭게 쌓는다.
+            if j < Max: 
+                _x1 = Xdata[randomRow[i],:]
+                _y1 = Ydata[randomRow[i],:]
+                databX.append(_x1)
+                databY.append(_y1)
+                j = j + 1
+        else: 
+            if k < Max:
+                _x2 = Xdata[randomRow[i],:]
+                _y2 = Ydata[randomRow[i],:]
+                databX.append(_x2)
+                databY.append(_y2)
+                k = k + 1
+        if j >= Max and k >= Max:
+            break
+            
+    return np.array(databX), np.array(databY)
+
+def combine(xy1_x, xy1_y, xy2_x, xy2_y):
+#    dataX = []
+#    dataY = []
+#    dataX.append(xy1_x)
+#    dataY.append(xy1_y)
+    dataX = np.vstack([np.array(xy1_x), np.array(xy2_x)])
+    dataY = np.vstack([np.array(xy1_y), np.array(xy2_y)])
+    
+    return dataX, dataY
+    
+
+def Scaling_dataset(dataX):# (7000,100,4)
+    for i in range(dataX.shape[0]):
+        dataX[i,:,2:5] = MinMaxScalerbyRow(dataX[i,:,2:5])#-1~1 normalizing [0,1,2,3,4,5]:[1,2,3,4,5,6]
+    return dataX  
+    
+def shuffle_dataset(dataX,dataY):
+    
+    shuffle = np.arange(dataY.shape[0])
+    np.random.shuffle(shuffle)
+    datasX = dataX[shuffle]
+    datasY = dataY[shuffle]
+    return datasX, datasY
+
+def sampleSizeDown(Xdata, Ydata, leng):
+    dataX = []
+    dataY = []
+    
+    for i in range(0, leng):
+        _x = Xdata[i,:,:]
+        _y = Ydata[i,:]
+        dataX.append(_x)
+        dataY.append(_y)
+        
+    return np.array(dataX), np.array(dataY)
+    
+def sampledivide(Xdata, Ydata):
+    data1X = []
+    data2X = []
+    data3X = []
+    data1Y = []
+    data2Y = []
+    data3Y = []
+    leng = int(len(Ydata) / 3)
+    for i in range(0, leng * 3):
+        if i < leng:
+            _1x = Xdata[i, :, :]
+            _1y = Ydata[i, :]
+            data1X.append(_1x)
+            data1Y.append(_1y)
+        elif (i >= leng) and (i < (leng * 2)):
+            _2x = Xdata[i, :, :]
+            _2y = Ydata[i, :]
+            data2X.append(_2x)
+            data2Y.append(_2y)
+        else:
+            _3x = Xdata[i, :, :]
+            _3y = Ydata[i, :]
+            data3X.append(_3x)
+            data3Y.append(_3y)
+            
+    return np.array(data1X), np.array(data1Y), np.array(data2X), np.array(data2Y), np.array(data3X), np.array(data3Y)
+
+#%% Model Training Function Define
+
+def inference(X, seq_length=None, hidden_dim=None, output_dim=None):
+
+    
+    
+    cell = tf.contrib.rnn.LSTMCell(hidden_dim, forget_bias=1.0)
+    outputs, _states = tf.nn.dynamic_rnn(cell, X, dtype=tf.float32)
+    
+    #-------1. fully connected method-------   
+    Y_pred = tf.contrib.layers.fully_connected(
+           outputs[:, -1], output_dim, activation_fn=None)  # We use the last cell's output
+    
+    #-------2. matmul method-------    
+#    def weight_variable(shape):
+#        initial = np.sqrt(2.0 / shape[0]) * tf.truncated_normal(shape, stddev=0.01)
+#        Weight = tf.Variable(initial, name='w')
+#        
+#        return Weight
+#
+#    def bias_variable(shape):
+#        initial = tf.zeros(shape, dtype=tf.float32)
+#        Bias = tf.Variable(initial, name='b')
+#        
+#        return Bias
+#    V = weight_variable([hidden_dim, output_dim])
+#    c = bias_variable([output_dim])
+#    Y_pred = tf.matmul(outputs[:,-1], V) + c
+
+    return Y_pred
+
+def cost(Y_pred, Y, hypothesis):
+    with tf.name_scope('cost'):
+        cost = -tf.reduce_mean(Y * tf.log(hypothesis) + (1 - Y) * tf.log(1 - hypothesis))
+#    tf.summary.scalar('cross_entropy', cost)
+    return cost
+
+def predicted(Y_pred,hypothesis):
+    predicted = tf.cast(hypothesis > 0.5, dtype=tf.float32)
+    return predicted
+
+def accuracy(Y_pred, Y, predicted):
+    with tf.name_scope('accuracy'):
+        accuracy = tf.reduce_mean(tf.cast(tf.equal(predicted, Y), dtype=tf.float32))
+#    tf.summary.scalar('accuracy', accuracy)
+    return accuracy
+
+def training(cost):
+    with tf.name_scope('train'):
+        optimizer = \
+            tf.train.AdamOptimizer(learning_rate=0.001, beta1=0.9, beta2=0.999)
+        train_step = optimizer.minimize(cost)
+    return train_step
+
+class EarlyStopping():
+    def __init__(self, patience=0, verbose=0):
+        self._step = 0
+        self._loss = float('inf')
+        self.patience = patience
+        self.verbose = verbose
+
+    def validate(self, loss):
+        if self._loss < loss:
+            self._step += 1
+            if self._step > self.patience:
+                #if self.verbose:
+                    #print('early stopping')
+                return True
+        else:
+            self._step = 0
+            self._loss = loss
+
+        return False
+
+    
+#%%
+
+if __name__ == '__main__':
+    
+    #generate data
+    # train Parameters
+    seq_length = 150
+    data_dim = 5 #Vd Irn T P
+    hidden_dim = 15
+    output_dim = 1
+    learning_rate = 0.01
+    iterations = 1500
+    
+    Min_expectation = 0.9
+    sec = 180
+    Volt_max = 4.082
+    Volt_min = 3.2
+    downSize = 60000
+    
+#Preprocessing Order: loadtxt, power_append, Labeling -> V,I,T,P
+#    # Voltage, Current, Temperture
+#    train_n1_s1 = np.loadtxt('RW25_refdis_1.csv', delimiter=',')#Naming Rule: DataUsage_FileNumber_PrepocessingSteps
+#    test_s1 = np.loadtxt('RW25_refdis_2.csv', delimiter=',')
+    
+    train_n1_s1 = np.loadtxt('RW9_RW_1.csv', delimiter=',')
+    test_s1 = np.loadtxt('RW9_RW_2.csv', delimiter=',')
+    
+    train_n1_s2 = power_append(train_n1_s1) #First training data, power label appending
+    test_s2 = power_append(test_s1) #First testing data, power laberl appending
+
+    train_n1_s3 = labeling(train_n1_s2, sec)       #train) NG labeling
+    test_s3 = labeling(test_s2, sec)       #test) NG labeling
+    
+    train_n1_s4 = rounding(train_n1_s3)#xy1 : train dataset
+    test_s4 = rounding(test_s3)#xy2 : test dataset
+    
+    train_n1_s5 = VoltageMinMax(train_n1_s4, Volt_max, Volt_min)
+    test_s5 = VoltageMinMax(test_s4, Volt_max, Volt_min)
+    print("VmIrTP-Setting------")#---------------------------------------------
+    
+    train_n1_s6 = add_Vdelta(train_n1_s5)#VITP -> VdVTIP
+    test_s6 = add_Vdelta(test_s5)
+    #train_n1_s6 = chage_toVdelta(train_n1_s5)#VITP -> VdITP
+    #test_s6 = chage_toVdelta(test_s5)
+    print("Delta Setting-------")#---------------------------------------------    
+    
+    #train_n1_s7 = erasing(train_n1_s6)
+    #test_s7 = erasing(test_s6)
+    #print("erasing------------")#----------------------------------------------
+    
+    j1_n1, j0_n1 = NG_count(train_n1_s6, data_dim)      #train) NG counting
+    k1, k0 = NG_count(test_s6, data_dim)          #test) NG counting
+    print("NG_count------------")#---------------------------------------------
+    
+    # training data
+    N_train_1 = int(len(train_n1_s6))
+    train_set_1 = train_n1_s6[0:N_train_1]
+    
+    train_built_X, train_built_Y = build_dataset(train_set_1, seq_length, data_dim) 
+    train_scaled_X = Scaling_dataset(train_built_X)#After build_dataset
+    
+    #test data
+    N_test = int(len(test_s6))
+    test_set = test_s6[0:N_test]
+    
+    test_built_X, test_built_Y = build_dataset(test_set, seq_length,data_dim)
+    test_scaled_X = Scaling_dataset(test_built_X)
+    print("Build_dataset------")#----------------------------------------------
+    
+#    trainbX_1, trainbY_1 = balancing(train1X_1, train1Y_1, j1_1)
+#    trainbX_3, trainbY_3 = balancing(train1X_3, train1Y_3, j1_3)
+#    trainbX_5, trainbY_5 = balancing(train1X_5, train1Y_5, j1_5)
+#    trainbX_7, trainbY_7 = balancing(train1X_7, train1Y_7, j1_7)
+#    trainbX_9, trainbY_9 = balancing(train1X_9, train1Y_9, j1_9)
+#    trainbX_11, trainbY_11 = balancing(train1X_11, train1Y_11, j1_11)
+#    trainbX_13, trainbY_13 = balancing(train1X_13, train1Y_13, j1_13)
+    #print("Balancing-------------")#-------------------------------------------
+    
+#    trainc3X, trainc3Y = combine(trainbX_1, trainbY_1,trainbX_3, trainbY_3)
+#    trainc5X, trainc5Y = combine(trainc3X, trainc3Y, trainbX_5, trainbY_5)
+#    trainc7X, trainc7Y = combine(trainbX_1, trainbY_1, trainbX_7, trainbY_7)
+#    trainc9X, trainc9Y = combine(trainc7X, trainc7Y, trainbX_9, trainbY_9)
+#    trainc11X, trainc11Y = combine(trainc9X, trainc9Y, trainbX_11, trainbY_11)
+#    trainc13X, trainc13Y = combine(trainc7X, trainc7Y, trainbX_13, trainbY_13)
+    #print("Combining-------------")#-------------------------------------------
+
+    #traindX, traindY = sampleSizeDown(trainsdX, train1Y_1, downSize)
+    #print("SampleSizeDown--------")#-------------------------------------------
+    
+    
+    #print("DatasetShuffling------")#-------------------------------------------
+
+    test_balanced_X_1, test_balanced_Y_1 = copy.deepcopy(balancing(test_scaled_X, test_built_Y, k1))
+    test_balanced_X_2, test_balanced_Y_2 = copy.deepcopy(balancing(test_scaled_X, test_built_Y, k1))
+    test_balanced_X_3, test_balanced_Y_3 = copy.deepcopy(balancing(test_scaled_X, test_built_Y, k1))
+    
+    testX_1, testY_1 = shuffle_dataset(test_balanced_X_1, test_balanced_Y_1)
+    testX_2, testY_2 = shuffle_dataset(test_balanced_X_2, test_balanced_Y_2)
+    testX_3, testY_3 = shuffle_dataset(test_balanced_X_3, test_balanced_Y_3)
+    print("test data Setting------")#------------------------------------------
+    
+    
+    
+    print("Model Architecture Generating------")#------------------------------
+    # input place holders
+    X = tf.placeholder(tf.float32, [None, seq_length, data_dim], name='X')
+    Y = tf.placeholder(tf.float32, [None, 1], name='Y')
+    
+    # build a LSTM network
+    Y_pred = inference(X, seq_length=seq_length, hidden_dim=hidden_dim,output_dim=output_dim)
+    print("Model output prediction check------")#------------------------------
+    
+    # cost/loss    
+    #hypothesis = tf.div(1., 1. + tf.exp(-Y_pred))
+    hypothesis = tf.sigmoid(Y_pred)
+    #cross_entropy
+    cost = cost(Y_pred, Y, hypothesis)
+    # optimizer
+    train = training(cost)
+    print("Model train and loss function check")#------------------------------
+    
+    predicted = predicted(Y_pred, hypothesis)
+    accuracy = accuracy(Y_pred, Y, predicted)
+    print("Accuracy function check------------")#------------------------------
+
+    # RMSE
+    targets = tf.placeholder(tf.float32, [None, 1])
+    predictions = tf.placeholder(tf.float32, [None, 1])
+    rmse = tf.sqrt(tf.reduce_mean(tf.square(targets - predictions)))
+    print("RMSE function check----------------")#------------------------------
+    
+    #early_stopping_A = EarlyStopping(patience=40, verbose=1)
+    early_stopping20 = EarlyStopping(patience=20, verbose=1)
+    early_stopping10 = EarlyStopping(patience=10, verbose=1)
+    early_stopping30 = EarlyStopping(patience=30, verbose=1)
+    trig30 = 1
+    trig20 = 1
+    trig10 = 1
+    epoch1 =0
+    epoch2 =0
+    epoch3 =0
+    cost1 =0
+    cost2 =0
+    cost3 =0
+    a_temp10 = 0
+    a_temp20 = 0
+    a_temp30 = 0
+    #Absolute_a = np.zeros(iterations,int)
+    Absolute_a_1 = []
+    Absolute_a_1_epoch = 0
+    Absolute_a_1_max = 0
+    Absolute_a_2 = []
+    Absolute_a_2_epoch = 0
+    Absolute_a_2_max = 0
+    Absolute_a_3 = []
+    Absolute_a_3_epoch = 0
+    Absolute_a_3_max = 0
+    cnt = 0
+    triggg = 0
+    
+    init = tf.global_variables_initializer()
+    
+    saver = tf.train.Saver() #saver init
+        
+    for op in (X, Y, Y_pred, hypothesis, cost, train, predicted, accuracy, targets, predictions, rmse):
+        tf.add_to_collection("my_important_ops", op)
+
+    #saver = tf.train.import_meta_graph("./my_model_1.ckpt.meta")    #load meta file of saved model
+#    X, Y, Y_pred, hypothesis, cost, train, predicted, accuracy, targets, predictions, rmse = tf.get_collection("my_important_ops")
+    
+    print("Save operation collection check-----")#-----------------------------
+
+
+    #Train Model
+    with tf.Session() as sess:
+
+#        merged_summary = tf.summary.merge_all()
+#        file_writer = tf.summary.FileWriter(LOG_DIR, sess.graph)
+        
+        
+        sess.run(init)
+        
+        # Training step
+        for epoch in range(iterations):
+            train_balanced_X_1, train_balanced_Y_1 = balancing(train_scaled_X, train_built_Y, j1_n1)
+            train_shuffled_X, train_shuffled_Y = shuffle_dataset(train_balanced_X_1,train_balanced_Y_1) #학습할 때마다 섞기
+            #trainsdX, trainsdY = sampleSizeDown(trainscX, trainY)
+            train_div1_X, train_div1_Y, train_div2_X, train_div2_Y, train_div3_X, train_div3_Y =  sampledivide(train_shuffled_X, train_shuffled_Y)
+            
+            
+            c_1, _ = sess.run([cost, train], feed_dict={
+                X: train_div1_X,
+                Y: train_div1_Y,
+                })
+            c_2, _ = sess.run([cost, train], feed_dict={
+                X: train_div2_X,
+                Y: train_div2_Y,
+                })
+            c_3, _ = sess.run([cost, train], feed_dict={
+                X: train_div3_X,
+                Y: train_div3_Y,
+                })
+            
+#            summary = sess.run(merged_summary,feed_dict={X:trainX, Y:trainY})
+                
+            print('epoch: ', epoch,' cost_val: ', 'cost_val1: ', c_1,'cost_val2: ', c_2,'cost_val3: ', c_3)
+            
+            Absolute_A_1= sess.run(accuracy, feed_dict={X:testX_1, Y:testY_1})
+            _ab_a_1 = Absolute_A_1
+            Absolute_a_1.append(_ab_a_1)
+
+            print('temp accuracy_1: ', Absolute_a_1[epoch])
+            
+            if Absolute_a_1[epoch] >= Absolute_a_1_max:
+                Absolute_a_1_max = copy.deepcopy(Absolute_a_1[epoch])
+                Absolute_a_1_epoch = copy.deepcopy(epoch)
+                Absolute_a_1_cost = copy.deepcopy(c_3)
+                save_path = saver.save(sess, "./my_model_RW_1_{}.ckpt".format(epoch))
+            Absolute_A_2= sess.run(accuracy, feed_dict={X:testX_2, Y:testY_2})
+            _ab_a_2 = Absolute_A_2
+            Absolute_a_2.append(_ab_a_2)
+
+            print('temp accuracy_2: ', Absolute_a_2[epoch])
+            
+            if Absolute_a_2[epoch] >= Absolute_a_2_max:
+                Absolute_a_2_max = copy.deepcopy(Absolute_a_2[epoch])
+                Absolute_a_2_epoch = copy.deepcopy(epoch)
+                Absolute_a_2_cost = copy.deepcopy(c_3)
+                save_path = saver.save(sess, "./my_model_RW_2_{}.ckpt".format(epoch))   #save first trained model
+            
+            Absolute_A_3= sess.run(accuracy, feed_dict={X:testX_3, Y:testY_3})
+            _ab_a_3 = Absolute_A_3
+            Absolute_a_3.append(_ab_a_3)
+
+            print('temp accuracy_3: ', Absolute_a_3[epoch])
+            
+            if Absolute_a_3[epoch] >= Absolute_a_3_max:
+                Absolute_a_3_max = copy.deepcopy(Absolute_a_3[epoch])
+                Absolute_a_3_epoch = copy.deepcopy(epoch)
+                Absolute_a_3_cost = copy.deepcopy(c_3)
+                save_path = saver.save(sess, "./my_model_RW_3_{}.ckpt".format(epoch))  
+            
+            #file_writer.add_summary(summary, global_step = epoch)
+            #save_path = saver.save(sess, "./my_model_0304.ckpt")   #save first trained model
+
+            # Early Stopping 검사
+            #if early_stopping.validate(cost_val3):
+            #    break
+            
+#            if early_stopping10.validate(cost_val3) and (trig10 == 1):
+#                a_temp10 = sess.run(accuracy,feed_dict={X:testX, Y:testY})
+#                print('early_stopping')
+#                print("\ntemp10_accuracy: ", a_temp10)
+#                epoch1 = epoch
+#                cost1 = cost_val3
+#                trig10 = 0
+#            
+#            if early_stopping20.validate(cost_val3) and (trig20 == 1):
+#                a_temp20 = sess.run(accuracy,feed_dict={X:testX, Y:testY})
+#                print('early_stopping')
+#                print("\nTemp20_accuracy: ", a_temp20)
+#                epoch2 = epoch
+#                cost2 = cost_val3
+#                trig20 = 0
+##                            
+#            if early_stopping30.validate(cost_val3) and (trig30 == 1):
+#                a_temp30 = sess.run(accuracy,feed_dict={X:testX, Y:testY})
+#                print('early_stopping')
+#                print("\ntemp30_accuracy: ", a_temp30)
+#                epoch3 = epoch
+#                cost3 = cost_val3
+#                trig30 = 0
+        
+        if Absolute_a_1_max > Absolute_a_2_max and Absolute_a_1_max > Absolute_a_3_max:
+            Absolute_a_epoch = Absolute_a_1_epoch
+            sess_number = 1
+        elif Absolute_a_2_max > Absolute_a_3_max:
+            Absolute_a_epoch = Absolute_a_2_epoch
+            sess_number = 2
+        else:
+            Absolute_a_epoch = Absolute_a_3_epoch
+            sess_number = 3
+            
+        saver.restore(sess, "./my_model_{}_{}.ckpt".format(sess_number ,Absolute_a_epoch))  
+
+       
+        print("Train complete, Test start------")#-----------------------------
+        
+        # Test step
+        test_predict = sess.run(hypothesis, feed_dict={X: testX_1})
+        rmse_val = sess.run(rmse, feed_dict={
+                        targets: testY_1, predictions: test_predict})
+
+        a, c = sess.run([accuracy, cost], feed_dict={X:testX_1,Y:testY_1})
+#        print("Epoch: ",epoch1, " cost_val: ", cost1)
+#        print("Temp10_accuracy: ", a_temp10)
+#        print("Epoch: ",epoch2, " cost_val: ", cost2)
+#        print("Temp20_accuracy: ", a_temp20)
+#        print("Epoch: ",epoch3, " cost_val: ", cost3)
+#        print("Temp30_accuracy: ", a_temp30)
+        
+        print("\nEpoch: ",Absolute_a_epoch, " cost_val: ", c)
+        print("Finanl Accuracy: ",a)
+        print("RMSE: {}".format(rmse_val))
+        
+    
+        # Plot predictions
+        plt.plot(testY_1)
+        plt.plot(test_predict)
+        plt.xlabel("Time Period")
+        plt.ylabel("Good/NG")
+        plt.show()
+        
+            
+            
