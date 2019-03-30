@@ -295,7 +295,7 @@ if __name__ == '__main__':
     output_dim = 1          #Y_pred's dimension
     iterations = 1500       #Number of learning
     
-    sec = 180               #Remaining time before 3.2V
+    sec = 300               #Remaining time before 3.2V
     Volt_max = 4.082        #Maximum Value of Voltage
     Volt_min = 3.2          #Minimum Value of Voltage
     downSize = 60000        #Reducing size when OOM error happens.
@@ -305,8 +305,8 @@ if __name__ == '__main__':
     #   Naming Rule: DataUsage_FileNumber_PrepocessingSteps
     
     #Reference Discharge Dataset [Voltage, Current, Temperture]
-    #train_n1_s1 = np.loadtxt('RW25_refdis_1.csv', delimiter=',')
-    #test_s1 = np.loadtxt('RW25_refdis_2.csv', delimiter=',')
+#    train_n1_s1 = np.loadtxt('RW25_refdis_1.csv', delimiter=',')
+#    test_s1 = np.loadtxt('RW25_refdis_2.csv', delimiter=',')
     
     #RandomWalk Charge and Discharge Dataset [Voltage, Current, Temperture]
     train_n1_s1 = np.loadtxt('RW9_RW_1.csv', delimiter=',')
@@ -419,7 +419,8 @@ if __name__ == '__main__':
     Absolute_a_3 = []
     Absolute_a_3_epoch = 0
     Absolute_a_3_max = 0
-    
+    rec_a_1 = []
+    rec_c_3 = []    
     #initialization
     init = tf.global_variables_initializer()
     saver = tf.train.Saver() #saver init
@@ -470,6 +471,9 @@ if __name__ == '__main__':
                 X: train_div3_X,
                 Y: train_div3_Y,
                 })
+            
+            rec_a_1.append(a_1)
+            rec_c_3.append(c_3)
             
             """"
             #when we use Tensorboard, it will summarlize the records
@@ -535,7 +539,7 @@ if __name__ == '__main__':
             sess_number = 3
         
         #restore the finest sess
-        saver.restore(sess, "./my_model_{}_{}.ckpt".format(sess_number ,Absolute_a_epoch))  
+        saver.restore(sess, "./my_model_RW_{}_{}.ckpt".format(sess_number ,Absolute_a_epoch))  
 
         #Evaluating the trained model
         test_predict = sess.run(hypothesis, feed_dict={X: testX_1})
@@ -550,11 +554,21 @@ if __name__ == '__main__':
         
     
         # Plot predictions
-        plt.plot(testY_1)
-        plt.plot(test_predict)
+        plt.figure(1)
+        plt.xlim([0, 1500])
+        plt.title('Learning record')
+        plt.plot(rec_c_3,'-r',label='LOSS_Train')
+        plt.plot(rec_a_1,'-b',label='Accuracy_Train')
+        plt.plot(Absolute_a_1,'-g',label='Accuracy_Test')
+        plt.legend()
+        plt.xlabel("epoch")
+        plt.ylabel("Loss / Accuracy")
+        
+        plt.figure(2)
+        plt.title('Sess Test')
+        plt.plot(testY_1,'-b',label='Y')
+        plt.plot(test_predict,'-g',label='Y_pred')
+        plt.legend()
         plt.xlabel("Time Period")
         plt.ylabel("Good/NG")
         plt.show()
-        
-            
-            
