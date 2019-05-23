@@ -1,3 +1,4 @@
+# https://github.com/hunkim/DeepLearningZeroToAll/blob/master/lab-11-5-mnist_cnn_ensemble_layers.py
 # Lab 11 MNIST and Deep learning CNN
 # https://www.tensorflow.org/tutorials/layers
 import tensorflow as tf
