@@ -1,0 +1,404 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Sun May 26 13:29:56 2019
+
+@author: lifel
+"""
+
+import tensorflow as tf
+import numpy as np
+import random
+import copy
+import matplotlib.pyplot as plt
+
+tf.reset_default_graph()
+tf.set_random_seed(777)
+
+learning_rate = 0.001
+
+
+#Valuating time period
+seq_length = 150
+
+#Vd: Vm's gradient, Vm: normallized by standard MIXMAX, Irn: I rounded and normalized, Tn: T normalized, Pn: P noramlied
+data_dim = 5 #Vd Vm Irn Tn Pn 
+
+hidden_dim = 15         #RNN outputs which will be choosen by fully connected layer
+output_dim = 2          #Y_pred's dimension
+training_epochs = 1000  #Number of learning
+#iterations = 1500       
+
+sec = 180               #Remaining time before 3.2V
+Volt_max = 4.082        #Maximum Value of Voltage
+Volt_min = 3.2          #Minimum Value of Voltage
+downSize_div = 1        #Reducing size when OOM error happens.
+
+#Definitions of data prepocessing functions----------------------------------------------------------------------
+
+# -1 ~ 1 범위로 정규화
+def MinMaxScalerbyRow(data):
+    numerator = data - np.min(data, 0)
+    denominator = (np.max(data, 0) - np.min(data, 0)) * 0.5
+    return ((numerator) / (denominator + 1e-7)) - 1 # (1e-7: noise를 추가하여 분모가 0이 되는 것을 방지)
+    
+# 마지막열을 추가하고 그 열에 P=V*I 값 저장
+def power_append(xy):
+    xy = np.c_[xy, np.zeros(int(len(xy)))]
+    for i in range(int(len(xy))):
+        xy[i][3] = xy[i][0]*xy[i][1]
+    return xy    
+    
+# 3.2V 이하가 되면 3.2V 이하가 된 시점부터 sec초 시간범위의 NG label 값을 1로 설정
+def labeling(xy, sec):
+    xy = np.c_[xy, np.ones(int(len(xy)))]
+    xy = np.c_[xy, np.zeros(int(len(xy)))]     
+    for i in range(int(len(xy))):
+        if (i >= sec):
+            #xy[i][4] = 0
+            if(xy[i][0] <= 3.2):
+                i = i - sec
+                xy[i][5] = 1
+                xy[i][4] = 0
+                for k in range(sec) :
+                    i = i + 1
+                    xy[i][5] = 1
+                    xy[i][4] = 0
+    return xy
+    
+# 데이터의 전압 값을 0 ~ 1 범위로 정규화 후, 최소전압 ~ 최대전압 범위로 다시 정규화
+def VoltageMinMax(data, max_val, min_val):
+    datav = data[:, 0:1]
+    numerator = datav - np.min(datav,0)
+    denominator = np.max(datav, 0) - np.min(datav, 0)
+    datanv = numerator / (denominator + 1e-7)
+    data[:, 0:1] = (datanv * (max_val - min_val)) + min_val
+    return data
+    
+# 전압 레이블을 이전과 현재의 전압의 차이인 Vd로 변경하여 데이터의 레이블을 다음과 같이 설정. (Vd, I, T, P)
+def chage_toVdelta(Xdata): 
+    for i in range(int(len(Xdata)) - 1):
+        Xdata[i][0] = (Xdata[i + 1][0] - Xdata[i][0])
+    Xdata[i + 1][0] = Xdata[i][0]
+    return Xdata
+    
+# 데이터의 레이블을 다음과 같이 설정. (Vd, V, I, T, P) 
+def add_Vdelta(Xdata):
+    delta_data = np.zeros((int(len(Xdata)), 1))
+    delta_data = Xdata.copy()
+    delta_data = np.insert(delta_data, 0, 0, axis=1)
+    for i in range(int(len(Xdata)) - 1):
+        delta_data[i][0] = (Xdata[i + 1][0] - Xdata[i][0])
+    delta_data[i + 1][0] = delta_data[i][0]
+    return delta_data
+    
+# 전류 값 반올림
+def rounding(Xdata):
+    for i in range(int(len(Xdata))):
+        Xdata[i][1] = round(Xdata[i][1],2) # I
+    return Xdata
+    
+# 데이터의 열 삭제    
+def erasing(Xdata): #Vd Vm Irn Tn Pn
+    data4X = np.delete(Xdata, 4, axis = 1)
+    return np.delete(data4X, 3, axis = 1)
+    #return np.delete(data3X, 2, axis = 1)
+    #return np.delete(data2X, 0, axis = 1)
+    
+# NG 값이 1인 갯수, NG 값이 0인 갯수 반환. data_dim(데이터의 열 수)
+def NG_count(xy, data_dim):
+    j = 0
+    for i in range(int(len(xy))):
+        if (xy[i][data_dim+1] == 1):
+            j = j + 1
+    return j, int(len(xy)) - j 
+    
+# 2차원의 데이터를 seq_length 크기만큼 분할하고 분할한 것들을 하나씩 쌓아 올려 3차원 데이터 생성
+def build_dataset(time_series, seq_length, data_dim):
+    dataX = []
+    dataY = []
+    for i in range(0, len(time_series) - seq_length):
+        _x = time_series[i:i + seq_length, 0:data_dim]
+        _y = time_series[i + seq_length, data_dim:7]
+        #print(_x, "->", _y)
+        dataX.append(_x)
+        dataY.append(_y)
+    return np.array(dataX), np.array(dataY)
+    
+# NG 값이 0인 데이터와 NG 값이 1인 데이터의 비율을 1:1 로 맞춘다.
+def balancing(Xdata, Ydata, Max):    
+    databX = []
+    databY = []
+    j = 0
+    k = 0
+    leng = int(len(Ydata))
+    randomRow = np.arange(leng) 
+    random.shuffle(randomRow) # shuffle
+    for i in randomRow:
+        # 임의의 순번 중 NG가 0인 순번의 데이터를 NG1인 데이터의 수만큼 새롭게 쌓는다.
+        if Ydata[randomRow[i],0] == 1:   
+            if j < Max: 
+                _x1 = Xdata[randomRow[i],:]
+                _y1 = Ydata[randomRow[i],:]
+                databX.append(_x1)
+                databY.append(_y1)
+                j = j + 1
+        else: 
+            if k < Max:
+                _x2 = Xdata[randomRow[i],:]
+                _y2 = Ydata[randomRow[i],:]
+                databX.append(_x2)
+                databY.append(_y2)
+                k = k + 1
+        if j >= Max and k >= Max:
+            break
+            
+    return np.array(databX), np.array(databY)
+    
+# 데이터 병합
+def combine(xy1_x, xy1_y, xy2_x, xy2_y):
+    dataX = np.vstack([np.array(xy1_x), np.array(xy2_x)])
+    dataY = np.vstack([np.array(xy1_y), np.array(xy2_y)])
+    
+    return dataX, dataY
+    
+# 데이터 스케일링(전류, 온도, 전력 정규화)
+def Scaling_dataset(dataX): # dataX(7000,100,4)
+    for i in range(dataX.shape[0]):
+        dataX[i,:,2:5] = MinMaxScalerbyRow(dataX[i,:,2:5])
+    return dataX  
+    
+# 기존의 데이터의 값들을 무작위로 섞어 재배열
+def shuffle_dataset(dataX,dataY):
+    shuffle = np.arange(dataY.shape[0])
+    np.random.shuffle(shuffle)
+    datasX = dataX[shuffle]
+    datasY = dataY[shuffle]
+    return datasX, datasY
+    
+# leng 크기만큼 샘플 크기를 줄임
+def sampleSizeDown(data, div):
+    datad = []
+    
+    for i in range(0, int(len(data)/div)):#int(len(data)/div)):
+        _d = data[i, :]
+        datad.append(_d)
+        
+    return np.array(datad)
+    
+# 데이터를 3등분하여 반환
+def sampledivide(Xdata, Ydata):
+    data1X = []
+    data2X = []
+    data3X = []
+    data1Y = []
+    data2Y = []
+    data3Y = []
+    leng = int(len(Ydata) / 3)
+    for i in range(0, leng * 3):
+        if i < leng:
+            _1x = Xdata[i, :, :]
+            _1y = Ydata[i, :]
+            data1X.append(_1x)
+            data1Y.append(_1y)
+        elif (i >= leng) and (i < (leng * 2)):
+            _2x = Xdata[i, :, :]
+            _2y = Ydata[i, :]
+            data2X.append(_2x)
+            data2Y.append(_2y)
+        else:
+            _3x = Xdata[i, :, :]
+            _3y = Ydata[i, :]
+            data3X.append(_3x)
+            data3Y.append(_3y)
+            
+    return np.array(data1X), np.array(data1Y), np.array(data2X), np.array(data2Y), np.array(data3X), np.array(data3Y)
+
+
+
+#Model Architecture-------------------------------------------------------------------
+
+
+class Model:
+    
+    def __init__(self, sees, name):
+        self.sess = sess
+        self.name = name
+        self._build_net()
+        
+    def _build_net(self):
+        with tf.variable_scope(self.name):
+            self.training = tf.placeholder(tf.bool)
+            
+            self.X = tf.placeholder(tf.float32, [None,seq_length, data_dim])
+            
+            #X_img = tf.reshape(self.X, [-1, 28, 28, 1])
+            self.Y = tf.placeholder(tf.float32, [None, 2])
+            
+            def lstm_cell():
+                lstm = tf.contrib.rnn.LSTMCell(hidden_dim, forget_bias=1.0)
+                return lstm
+            
+            multi_cell = tf.contrib.rnn.MultiRNNCell([lstm_cell() for _ in range(5)])
+            outputs, _states = tf.nn.dynamic_rnn(multi_cell, self.X, dtype=tf.float32)
+            
+            Y_pred = tf.contrib.layers.fully_connected(outputs[:, -1], output_dim, activation_fn=None)
+
+            # Logits (no activation) Layer: L5 Final FC 625 inputs -> 10 outputs
+            self.logits = tf.layers.dense(inputs=Y_pred, units=2)
+        
+        self.cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
+                logits=self.logits, labels=self.Y))
+        self.optimizer = tf.train.AdamOptimizer(
+                learning_rate=learning_rate).minimize(self.cost)
+        
+        correct_prediction = tf.equal(tf.argmax(self.logits, 1), tf.argmax(self.Y, 1))
+        
+        self.accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+        
+    def predict(self, x_test, training=False):
+        return self.sess.run(self.logits,feed_dict={self.X: x_test, self.training: training})
+    
+    def get_accuracy(self, x_test, y_test, training=False):
+        return self.sess.run(self.accuracy, feed_dict={self.X: x_test,
+                                                       self.Y: y_test, self.training: training})
+    
+    def train(self, x_data, y_data, training=True):
+        return self.sess.run([self.cost, self.optimizer], feed_dict={
+                self.X: x_data, self.Y: y_data, self.training: training})
+
+
+
+
+#Data preprocessing---------------------------------------------------------------------------------
+#Preprocessing Order: loadtxt, power_append, Labeling -> V,I,T,P
+#   Naming Rule: DataUsage_FileNumber_PrepocessingSteps
+
+#Input data-----------------------------------------------------------------------------------------
+#Reference Discharge Dataset [Voltage, Current, Temperture]
+train_n1_s1 = np.loadtxt('RW25_refdis_1.csv', delimiter=',')
+test_s1 = np.loadtxt('RW25_refdis_2.csv', delimiter=',')
+
+#RandomWalk Charge and Discharge Dataset [Voltage, Current, Temperture]
+#train_n1_s1 = np.loadtxt('RW9_RW_1.csv', delimiter=',')
+#test_s1 = np.loadtxt('RW9_RW_2.csv', delimiter=',')
+
+train_n1_s1 = sampleSizeDown(train_n1_s1, downSize_div)
+
+
+train_n1_s2 = power_append(train_n1_s1)     #Number 1 training data, power label appending
+test_s2 = power_append(test_s1)             #Test data, power laberl appending
+
+train_n1_s3 = labeling(train_n1_s2, sec)    #Number 1 training data, NG label appending
+test_s3 = labeling(test_s2, sec)            #Test data, NG label appending
+
+train_n1_s4 = rounding(train_n1_s3)         #Number 1 training data, I value rounding
+test_s4 = rounding(test_s3)                 #Test data, I value rounding
+
+train_n1_s5 = VoltageMinMax(train_n1_s4, Volt_max, Volt_min)        #Number 1 training data, V value MinMax Scaling
+test_s5 = VoltageMinMax(test_s4, Volt_max, Volt_min)                #Test data, V value MinMax Scaling
+
+train_n1_s6 = add_Vdelta(train_n1_s5)       #Number 1 training data, Vd label Inserting [Vd Vm Ir T P]
+test_s6 = add_Vdelta(test_s5)               #Test data, Vd label Inserting [Vd Vm Ir T P]
+
+"""
+#When editing the labels
+#train_n1_s6 = chage_toVdelta(train_n1_s5)  #Number 1 training data, Vm to Vd label changing [Vd Ir T P]
+#test_s6 = chage_toVdelta(test_s5)          #Test data, Vm to Vd label changing [Vd Ir T P]
+
+#train_n1_s6 = erasing(train_n1_s6)         #Number 1 training data, label erasing
+#test_s6 = erasing(test_s6)                 #Test data, label erasing
+"""
+
+j1_n1, j0_n1 = NG_count(train_n1_s6, data_dim)      #Number 1 training data, NG label values(1,0) counting
+k1, k0 = NG_count(test_s6, data_dim)                #Test data, NG label values(1,0) counting
+#Input Data labeling Finished
+
+#Training data transformation
+N_train_1 = int(len(train_n1_s6))           #Checking the length of Training data
+train_set_1 = train_n1_s6[0:N_train_1]      #Indexing
+
+train_built_X, train_built_Y = build_dataset(train_set_1, seq_length, data_dim)     #Training Dataset building
+
+train_scaled_X = Scaling_dataset(train_built_X)     #[Ir T P] labels normalizing to [Irn Tn Pn]
+
+#Test data transformation
+N_test = int(len(test_s6))                  #Checking the length of Training data
+test_set = test_s6[0:N_test]                #Indexing
+
+test_built_X, test_built_Y = build_dataset(test_set, seq_length,data_dim)           #Test Dataset building
+test_scaled_X = Scaling_dataset(test_built_X)       #[Ir T P] labels normalizing to [Irn Tn Pn]
+
+#trainbX_1, trainbY_1 = balancing(train1X_1, train1Y_1, j1_1)
+
+"""
+#When we combine various dataset 
+#trainc3X, trainc3Y = combine(trainbX_1, trainbY_1,trainbX_3, trainbY_3)
+#trainc5X, trainc5Y = combine(trainc3X, trainc3Y, trainbX_5, trainbY_5)
+#trainc7X, trainc7Y = combine(trainbX_1, trainbY_1, trainbX_7, trainbY_7)
+#trainc9X, trainc9Y = combine(trainc7X, trainc7Y, trainbX_9, trainbY_9)
+#trainc11X, trainc11Y = combine(trainc9X, trainc9Y, trainbX_11, trainbY_11)
+#trainc13X, trainc13Y = combine(trainc7X, trainc7Y, trainbX_13, trainbY_13)
+"""
+
+"""
+#Training sample sizing down when Out of Memory error occurred
+#traindX, traindY = sampleSizeDown(trainsdX, train1Y_1, downSize)
+"""
+#Randomly shuffled tree different Test dataset building
+#   balancing NG value size 1:1('0':'1') and randomly selecting data which has NG value '0'
+#   Shuffling their orders
+test_balanced_X_1, test_balanced_Y_1 = copy.deepcopy(balancing(test_scaled_X, test_built_Y, k1))
+test_balanced_X_2, test_balanced_Y_2 = copy.deepcopy(balancing(test_scaled_X, test_built_Y, k1))
+test_balanced_X_3, test_balanced_Y_3 = copy.deepcopy(balancing(test_scaled_X, test_built_Y, k1))
+testX_1, testY_1 = shuffle_dataset(test_balanced_X_1, test_balanced_Y_1)
+testX_2, testY_2 = shuffle_dataset(test_balanced_X_2, test_balanced_Y_2)
+testX_3, testY_3 = shuffle_dataset(test_balanced_X_3, test_balanced_Y_3)
+
+
+#Learning start----------------------------------------------------------------------
+    
+sess = tf.Session()
+
+models = []
+num_models = 5
+
+for m in range(num_models):
+    models.append(Model(sess, "model" + str(m)))
+    
+sess.run(tf.global_variables_initializer())
+
+print('Learning Start!')
+
+for epoch in range(training_epochs):
+    avg_cost_list = np.zeros(len(models))
+    
+    train_balanced_X_1, train_balanced_Y_1 = balancing(train_scaled_X, train_built_Y, j1_n1)    
+    train_shuffled_X, train_shuffled_Y = shuffle_dataset(train_balanced_X_1,train_balanced_Y_1)
+    train_div1_X, train_div1_Y, train_div2_X, train_div2_Y, train_div3_X, train_div3_Y =  sampledivide(train_shuffled_X, train_shuffled_Y)
+    
+    
+    for m_idx, m in enumerate(models):
+        c1, _ = m.train(train_div1_X, train_div1_Y)
+        c2, _ = m.train(train_div2_X, train_div2_Y)
+        c3, _ = m.train(train_div3_X, train_div3_Y)
+        avg_cost_list[m_idx] += (c1+c2+c3) / 3
+        
+    print('Epoch:', '%04d' % (epoch + 1), 'cost =', avg_cost_list)
+
+print('Learning Finished!')#------------------------------------------------------------------------
+
+test_size = len(testY_1)
+predictions = np.zeros([test_size, 2])
+for m_idx, m in enumerate(models):
+    print(m_idx, 'Accuracy:', m.get_accuracy(
+            testX_1, testY_1))
+    p = m.predict(testX_1)
+    predictions += p
+    
+ensemble_correct_prediction = tf.equal(
+        tf.argmax(predictions, 1), tf.argmax(testY_1, 1))
+
+ensemble_accuracy = tf.reduce_mean(
+        tf.cast(ensemble_correct_prediction, tf.float32))
+
+print('Ensemble accuracy:', sess.run(ensemble_accuracy))    
