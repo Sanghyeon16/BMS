@@ -12,7 +12,7 @@ Also, the training datasets for 30 minutes prediction was generated from KATECH.
 For training and performance evaluation of the warning model, Python 3.6.5 and Tensorflow-gpu 1.7.1 on GeForce GTX 1080ti (GPU) were used.
 
 ## Usage
-Input dataset should have time series [Voltage, Current, Temperature] variables.\
+Input dataset should be formed time series dataset which have [Voltage, Current, Temperature] variables.\
 The program will modify its variables and return warning signal in every [seqence length] sec.
 
 ## Citation
@@ -27,14 +27,5 @@ The program will modify its variables and return warning signal in every [seqenc
 }
 ```
 
-## History
+## Version Description
 
-TODO: Write history
-
-## Credits
-
-TODO: Write credits
-
-## License
-
-TODO: Write license
