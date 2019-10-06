@@ -15,7 +15,12 @@ For training and performance evaluation of the warning model, Python 3.6.5 and T
 Input dataset should be formed time series dataset which have [Voltage, Current, Temperature] variables.\
 The program will modify its variables and return warning signal in every [seqence length] sec.
 
+training.py is the newly simplified version.
+
 ## Citation
+
+New version is submitted on "IEIE Transactions on Smart Processing & Computing (IEIE SPC)"
+
 ```
 @inproceedings{lee2019bms,
   title={Deep Learning based Battery Remaining Time Warning Algorithm},
@@ -26,6 +31,3 @@ The program will modify its variables and return warning signal in every [seqenc
   organization={IEIE}
 }
 ```
-
-## Version Description
-
