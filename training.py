@@ -422,27 +422,20 @@ if __name__ == '__main__':
         
         test_size = len(testY_1)
         predictions = np.zeros([test_size, int(len(models))])
-        bestCase = np.zeros([test_size,1])
-        bestOpt = np.zeros([test_size,1])
         for m_idx, m in enumerate(models):
             print(m_idx, 'Accuracy:', m.get_accuracy(
                     testX_1, testY_1))
             p = m.predict(testX_1)
             for i in range(test_size):
                     predictions[i,m_idx] = p[i]
+        tensorPredic = tf.constant(predictions)
+        bestCase = tf.reduce_max(tensorPredic, reduction_indices=[1])
+        pred = tf.cast(bestCase > 0.5, dtype=tf.float32)
+        xxx = tf.reshape(pred, shape=[test_size,-1]).eval(session=sess)
+        ensemble_correct_prediction = tf.equal(xxx,testY_1)
+        ensemble_accuracy = tf.reduce_mean(tf.cast(ensemble_correct_prediction, tf.float32))
         
-        bestOpt = sess.run(tf.argmax(predictions, 1))
-        
-        for i in range(test_size):
-            bestCase[i] = predictions[i,bestOpt[i]]
-        
-        pred = tf.cast(tf.sigmoid(bestCase)> 0.5, dtype=tf.float32)
-        ensemble_correct_prediction = tf.equal(pred, testY_1)
-        
-        ensemble_accuracy = tf.reduce_mean(
-                tf.cast(ensemble_correct_prediction, tf.float32))
-        
-        print('Ensemble accuracy:', sess.run(ensemble_accuracy))    
+        print('Ensemble accuracy:', sess.run(ensemble_accuracy))  
         
     # Plot predictions
     plt.figure(1)
